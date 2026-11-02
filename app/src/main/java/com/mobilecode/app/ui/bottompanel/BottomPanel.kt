@@ -3,9 +3,11 @@ package com.mobilecode.app.ui.bottompanel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,23 +18,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -43,7 +46,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mobilecode.app.core.designsystem.VsCodeMonospaceFont
@@ -78,9 +84,13 @@ fun BottomPanel(
 
     val sessions by terminalViewModel.sessions.collectAsState()
     val activeSessionIndex by terminalViewModel.activeSessionIndex.collectAsState()
-    val activeSession = terminalViewModel.activeSession
+    val activeSession = sessions.getOrNull(activeSessionIndex)
 
     val problems by editorViewModel.problems.collectAsState()
+    val activeEditorTabs by editorViewModel.tabs.collectAsState()
+    val activeEditorIndex by editorViewModel.activeTabIndex.collectAsState()
+    val activeEditorTab = activeEditorTabs.getOrNull(activeEditorIndex)
+
     var selectedOutputChannel by remember { mutableStateOf("System") }
     val systemLogs by OutputLogger.systemLogs.collectAsState()
     val gitLogs by OutputLogger.gitLogs.collectAsState()
@@ -89,7 +99,7 @@ fun BottomPanel(
     val debugEntries by DebugConsoleManager.entries.collectAsState()
     var debugInput by remember { mutableStateOf("") }
 
-    val panelHeight = if (isMaximized) 420.dp else 220.dp
+    val panelHeight = if (isMaximized) 380.dp else 210.dp
 
     Column(
         modifier = modifier
@@ -105,28 +115,71 @@ fun BottomPanel(
                 .height(35.dp)
                 .background(VsCodeTheme.SidebarBackground)
                 .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Tabs
+            // Scrollable Tabs Row (IntrinsicSize.Max prevents active tab from pushing right tabs off screen)
             Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 PanelTabTitle(
                     title = if (problems.isNotEmpty()) "PROBLEMS (${problems.size})" else "PROBLEMS",
-                    isActive = activeTab == PanelTab.PROBLEMS
-                ) { activeTab = PanelTab.PROBLEMS }
+                    isActive = activeTab == PanelTab.PROBLEMS,
+                    onClick = { activeTab = PanelTab.PROBLEMS }
+                )
 
-                PanelTabTitle("OUTPUT", activeTab == PanelTab.OUTPUT) { activeTab = PanelTab.OUTPUT }
-                PanelTabTitle("DEBUG CONSOLE", activeTab == PanelTab.DEBUG_CONSOLE) { activeTab = PanelTab.DEBUG_CONSOLE }
-                PanelTabTitle("TERMINAL", activeTab == PanelTab.TERMINAL) { activeTab = PanelTab.TERMINAL }
-                PanelTabTitle("PORTS", activeTab == PanelTab.PORTS) { activeTab = PanelTab.PORTS }
+                PanelTabTitle(
+                    title = "OUTPUT",
+                    isActive = activeTab == PanelTab.OUTPUT,
+                    onClick = { activeTab = PanelTab.OUTPUT }
+                )
+
+                PanelTabTitle(
+                    title = "DEBUG CONSOLE",
+                    isActive = activeTab == PanelTab.DEBUG_CONSOLE,
+                    onClick = { activeTab = PanelTab.DEBUG_CONSOLE }
+                )
+
+                PanelTabTitle(
+                    title = "TERMINAL",
+                    isActive = activeTab == PanelTab.TERMINAL,
+                    onClick = { activeTab = PanelTab.TERMINAL }
+                )
+
+                PanelTabTitle(
+                    title = "PORTS",
+                    isActive = activeTab == PanelTab.PORTS,
+                    onClick = { activeTab = PanelTab.PORTS }
+                )
             }
+
+            Spacer(modifier = Modifier.width(4.dp))
 
             // Header Actions
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (activeTab == PanelTab.TERMINAL) {
+                    // Session switcher badge if multiple sessions
+                    if (sessions.size > 1) {
+                        sessions.forEachIndexed { idx, s ->
+                            Text(
+                                text = s.title,
+                                fontSize = 10.sp,
+                                color = if (idx == activeSessionIndex) Color.White else VsCodeTheme.SecondaryForeground,
+                                modifier = Modifier
+                                    .background(
+                                        if (idx == activeSessionIndex) VsCodeTheme.BadgeBackground else Color.Transparent,
+                                        RoundedCornerShape(3.dp)
+                                    )
+                                    .clickable { terminalViewModel.selectSession(idx) }
+                                    .padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                        }
+                    }
+
                     IconButton(
                         onClick = { terminalViewModel.createSession() },
                         modifier = Modifier.size(24.dp)
@@ -224,11 +277,9 @@ fun BottomPanel(
                 PanelTab.TERMINAL -> {
                     if (activeSession != null) {
                         TerminalWebView(
-                            activeSessionId = activeSession.id,
-                            initialHistory = terminalViewModel.getSessionHistory(activeSession.id),
-                            outputEvents = terminalViewModel.outputEvents,
-                            onTerminalInput = { _, data ->
-                                terminalViewModel.sendInput(data)
+                            session = activeSession,
+                            onCommandSubmitted = { cmd ->
+                                terminalViewModel.sendCommand(cmd)
                             }
                         )
                     }
@@ -236,15 +287,47 @@ fun BottomPanel(
 
                 PanelTab.PROBLEMS -> {
                     if (problems.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = VsCodeTheme.GitAdded,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = if (activeEditorTab != null) {
+                                        "No syntax problems detected in ${activeEditorTab.title}"
+                                    } else {
+                                        "No problems have been detected in the workspace."
+                                    },
+                                    color = VsCodeTheme.Foreground,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "No problems have been detected in the open workspace files.",
+                                text = "Live syntax diagnostics active for JSON, JavaScript, TypeScript, and Python.",
                                 color = VsCodeTheme.SecondaryForeground,
-                                fontSize = 12.sp
+                                fontSize = 11.sp
                             )
                         }
                     } else {
-                        LazyColumn(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp)
+                        ) {
                             items(problems) { problem ->
                                 ProblemRow(
                                     item = problem,
@@ -262,21 +345,27 @@ fun BottomPanel(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(26.dp)
-                                .background(VsCodeTheme.SidebarBackground)
+                                .background(Color(0xFF202021))
+                                .border(0.5.dp, VsCodeTheme.BorderColor)
                                 .padding(horizontal = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text("Channel:", fontSize = 11.sp, color = VsCodeTheme.SecondaryForeground)
                             listOf("System", "Git", "Tasks").forEach { ch ->
+                                val selected = selectedOutputChannel == ch
                                 Text(
                                     text = ch,
                                     fontSize = 11.sp,
-                                    fontWeight = if (selectedOutputChannel == ch) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (selectedOutputChannel == ch) VsCodeTheme.FocusBorder else VsCodeTheme.SecondaryForeground,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (selected) Color.White else VsCodeTheme.SecondaryForeground,
                                     modifier = Modifier
+                                        .background(
+                                            if (selected) VsCodeTheme.BadgeBackground else Color.Transparent,
+                                            RoundedCornerShape(3.dp)
+                                        )
                                         .clickable { selectedOutputChannel = ch }
-                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
                         }
@@ -287,7 +376,11 @@ fun BottomPanel(
                             else -> systemLogs
                         }
 
-                        LazyColumn(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp)
+                        ) {
                             items(currentLogs) { log ->
                                 Text(
                                     text = log,
@@ -310,7 +403,11 @@ fun BottomPanel(
                                 .padding(8.dp)
                         ) {
                             items(debugEntries) { entry ->
-                                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 2.dp)
+                                ) {
                                     if (entry.prompt.isNotEmpty()) {
                                         Text(
                                             text = "> ${entry.prompt}",
@@ -329,30 +426,62 @@ fun BottomPanel(
                             }
                         }
 
-                        // Debug REPL Input
+                        // Debug REPL Input Row (using BasicTextField so text is never clipped)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(38.dp)
+                                .height(36.dp)
                                 .background(VsCodeTheme.SidebarBackground)
+                                .border(0.5.dp, VsCodeTheme.BorderColor)
                                 .padding(horizontal = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(">", color = VsCodeTheme.FocusBorder, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 6.dp))
-                            OutlinedTextField(
+                            Text(
+                                text = ">",
+                                color = VsCodeTheme.FocusBorder,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = VsCodeMonospaceFont,
+                                modifier = Modifier.padding(end = 8.dp)
+                            )
+                            BasicTextField(
                                 value = debugInput,
-                                onValueChange = { debugInput = it },
-                                placeholder = { Text("Evaluate expression (e.g. 2 + 2, Date())...", fontSize = 11.sp, color = VsCodeTheme.SecondaryForeground) },
-                                modifier = Modifier.weight(1f),
+                                onValueChange = { value ->
+                                    if (value.endsWith("\n")) {
+                                        val expr = value.trimEnd('\n', '\r')
+                                        DebugConsoleManager.evaluate(expr)
+                                        debugInput = ""
+                                    } else {
+                                        debugInput = value
+                                    }
+                                },
                                 singleLine = true,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                    focusedBorderColor = Color.Transparent,
-                                    unfocusedBorderColor = Color.Transparent,
-                                    focusedTextColor = VsCodeTheme.Foreground,
-                                    unfocusedTextColor = VsCodeTheme.Foreground
-                                )
+                                textStyle = TextStyle(
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontFamily = VsCodeMonospaceFont
+                                ),
+                                cursorBrush = SolidColor(VsCodeTheme.FocusBorder),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                                keyboardActions = KeyboardActions(
+                                    onSend = {
+                                        DebugConsoleManager.evaluate(debugInput)
+                                        debugInput = ""
+                                    }
+                                ),
+                                modifier = Modifier.weight(1f),
+                                decorationBox = { inner ->
+                                    Box(contentAlignment = Alignment.CenterStart) {
+                                        if (debugInput.isEmpty()) {
+                                            Text(
+                                                text = "Evaluate expression (e.g. 2 + 2, 10 * 5, help, env)...",
+                                                fontSize = 11.sp,
+                                                color = VsCodeTheme.SecondaryForeground,
+                                                fontFamily = VsCodeMonospaceFont
+                                            )
+                                        }
+                                        inner()
+                                    }
+                                }
                             )
                             IconButton(
                                 onClick = {
@@ -373,27 +502,47 @@ fun BottomPanel(
                 }
 
                 PanelTab.PORTS -> {
-                    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp)
+                    ) {
                         Text(
-                            text = "FORWARDED PORTS & DEV SERVERS",
+                            text = "FORWARDED PORTS & LOCAL SERVERS",
                             color = VsCodeTheme.SecondaryForeground,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(VsCodeTheme.SidebarBackground)
-                                .padding(12.dp),
+                                .background(VsCodeTheme.SidebarBackground, RoundedCornerShape(4.dp))
+                                .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(4.dp))
+                                .padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column {
-                                Text("Port 3000 (Local Web Server)", color = VsCodeTheme.Foreground, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                Text("http://localhost:3000", color = VsCodeTheme.FocusBorder, fontSize = 11.sp)
+                                Text(
+                                    text = "Port 3000 (Dev Server)",
+                                    color = VsCodeTheme.Foreground,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "http://localhost:3000",
+                                    color = VsCodeTheme.FocusBorder,
+                                    fontSize = 11.sp,
+                                    fontFamily = VsCodeMonospaceFont
+                                )
                             }
-                            Text("ACTIVE", color = VsCodeTheme.GitAdded, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "READY",
+                                color = VsCodeTheme.GitAdded,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
@@ -441,23 +590,25 @@ private fun PanelTabTitle(
 ) {
     Column(
         modifier = Modifier
+            .width(IntrinsicSize.Max)
             .clickable(onClick = onClick)
-            .padding(vertical = 6.dp)
+            .padding(vertical = 6.dp, horizontal = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = title,
             color = if (isActive) VsCodeTheme.Foreground else VsCodeTheme.SecondaryForeground,
             fontSize = 11.sp,
-            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
+            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1,
+            softWrap = false
         )
-        if (isActive) {
-            Box(
-                modifier = Modifier
-                    .padding(top = 2.dp)
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .background(VsCodeTheme.FocusBorder)
-            )
-        }
+        Spacer(modifier = Modifier.height(3.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(2.dp)
+                .background(if (isActive) VsCodeTheme.FocusBorder else Color.Transparent)
+        )
     }
 }

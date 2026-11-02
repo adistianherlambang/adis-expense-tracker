@@ -22,7 +22,6 @@ class TerminalViewModel(
     private val _activeSessionIndex = MutableStateFlow(0)
     val activeSessionIndex: StateFlow<Int> = _activeSessionIndex.asStateFlow()
 
-    // Stream of terminal output events sent to the web view (sessionId, outputText)
     private val _outputEvents = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 64)
     val outputEvents: SharedFlow<Pair<String, String>> = _outputEvents.asSharedFlow()
 
@@ -34,24 +33,44 @@ class TerminalViewModel(
 
     init {
         createSession()
+
+        // Automatically switch terminal directory when user opens a workspace folder
+        viewModelScope.launch {
+            workspaceManager.currentWorkspaceDir.collect { dir ->
+                if (dir != null && dir.exists()) {
+                    val session = activeSession
+                    if (session != null) {
+                        processMap[session.id]?.write("cd \"${dir.absolutePath}\"\n")
+                        session.append("\n[Workspace switched to ${dir.absolutePath}]\n")
+                    }
+                }
+            }
+        }
     }
 
     fun createSession(customWorkingDir: File? = null): TerminalSession {
         sessionCounter++
         val sessionId = "term-$sessionCounter"
-        val workingDir = customWorkingDir ?: workspaceManager.currentWorkspaceDir.value ?: workspaceManager.getWorkspacesDirectory()
+        val workingDir = customWorkingDir
+            ?: workspaceManager.currentWorkspaceDir.value
+            ?: workspaceManager.getWorkspacesDirectory()
 
         val newSession = TerminalSession(
             id = sessionId,
-            title = "bash $sessionCounter",
+            title = "sh $sessionCounter",
             workingDir = workingDir
         )
+
+        // Add to _sessions BEFORE starting PTY so initial output is never lost
+        val updated = _sessions.value + newSession
+        _sessions.value = updated
+        _activeSessionIndex.value = updated.size - 1
 
         val pty = PtyProcess(
             sessionId = sessionId,
             workingDir = workingDir,
             onOutputReceived = { id, data ->
-                _sessions.value.find { it.id == id }?.append(data)
+                newSession.append(data)
                 viewModelScope.launch {
                     _outputEvents.emit(Pair(id, data))
                 }
@@ -60,9 +79,7 @@ class TerminalViewModel(
         processMap[sessionId] = pty
         pty.start()
 
-        val updated = _sessions.value + newSession
-        _sessions.value = updated
-        _activeSessionIndex.value = updated.size - 1
+        OutputLogger.logSystem("Started terminal session: ${newSession.title} in ${workingDir.name}")
         return newSession
     }
 
@@ -106,7 +123,15 @@ class TerminalViewModel(
     }
 
     fun sendCommand(command: String) {
-        sendInput("$command\n")
+        val session = activeSession ?: return
+        val trimmed = command.trim()
+        if (trimmed.equals("clear", ignoreCase = true) || trimmed.equals("cls", ignoreCase = true)) {
+            session.clear()
+            return
+        }
+        session.append("$ $command\n")
+        OutputLogger.logTask("Terminal [${session.title}]: $command")
+        processMap[session.id]?.write("$command\n")
     }
 
     override fun onCleared() {
@@ -115,4 +140,3 @@ class TerminalViewModel(
         processMap.clear()
     }
 }
-
