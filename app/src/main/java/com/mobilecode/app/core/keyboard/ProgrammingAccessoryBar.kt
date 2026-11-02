@@ -26,6 +26,8 @@ import com.mobilecode.app.core.designsystem.VsCodeTheme
 
 @Composable
 fun ProgrammingAccessoryBar(
+    targetMode: String = "EDIT",
+    onToggleTarget: () -> Unit = {},
     onKeyInserted: (key: String) -> Unit,
     onSpecialKey: (action: String) -> Unit,
     modifier: Modifier = Modifier
@@ -34,7 +36,7 @@ fun ProgrammingAccessoryBar(
 
     val pages = listOf(
         // Page 0: Modifiers & Navigation
-        listOf("ESC", "TAB", "CTRL", "ALT", "SHIFT", "↑", "↓", "←", "→"),
+        listOf("ESC", "TAB", "CTRL", "ALT", "SHIFT", "↑", "↓", "←", "→", "DEL"),
         // Page 1: Brackets
         listOf("{", "}", "[", "]", "(", ")", "<", ">", "\"", "'", "`"),
         // Page 2: Operators
@@ -53,11 +55,28 @@ fun ProgrammingAccessoryBar(
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // Target Mode Switcher (EDIT vs TERM)
+        Box(
+            modifier = Modifier
+                .padding(end = 4.dp)
+                .background(if (targetMode == "EDIT") VsCodeTheme.BadgeBackground else VsCodeTheme.WarningColor)
+                .clickable(onClick = onToggleTarget)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = targetMode,
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
         // Page switch button
         Box(
             modifier = Modifier
                 .padding(end = 4.dp)
-                .background(VsCodeTheme.BadgeBackground)
+                .background(VsCodeTheme.HoverBackground)
                 .clickable {
                     currentPage = (currentPage + 1) % pages.size
                 }
@@ -93,6 +112,7 @@ fun ProgrammingAccessoryBar(
                             "↓" -> onSpecialKey("DOWN")
                             "←" -> onSpecialKey("LEFT")
                             "→" -> onSpecialKey("RIGHT")
+                            "DEL" -> onSpecialKey("DEL")
                             else -> onKeyInserted(key)
                         }
                     }
@@ -124,4 +144,3 @@ private fun AccessoryKeyButton(
         )
     }
 }
-

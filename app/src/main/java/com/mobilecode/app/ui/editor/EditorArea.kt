@@ -1,5 +1,6 @@
 package com.mobilecode.app.ui.editor
 
+import android.webkit.WebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +42,8 @@ import com.mobilecode.app.core.editor.MonacoWebView
 @Composable
 fun EditorArea(
     editorViewModel: EditorViewModel,
+    onWebViewReady: ((WebView) -> Unit)? = null,
+    onOpenFolderRequested: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val tabs by editorViewModel.tabs.collectAsState()
@@ -76,17 +81,94 @@ fun EditorArea(
             }
         }
 
-        // Monaco Editor Surface
-        MonacoWebView(
-            activeTab = activeTab,
-            onContentChanged = { fileId, content, isDirty ->
-                editorViewModel.onContentChanged(fileId, content, isDirty)
-            },
-            onCursorPosition = { line, col ->
-                editorViewModel.updateCursor(line, col)
-            },
-            modifier = Modifier.weight(1f)
+        // Empty state vs Monaco Editor Surface
+        if (tabs.isEmpty()) {
+            // VS Code Welcome Watermark Surface
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(VsCodeTheme.EditorBackground),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Code,
+                        contentDescription = null,
+                        tint = VsCodeTheme.BadgeBackground.copy(alpha = 0.8f),
+                        modifier = Modifier.size(56.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = "Visual Studio Code",
+                        color = VsCodeTheme.Foreground,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text(
+                        text = "Mobile Development Environment",
+                        color = VsCodeTheme.SecondaryForeground,
+                        fontSize = 12.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    ShortcutHintRow("Show All Commands", "Ctrl + Shift + P")
+                    ShortcutHintRow("Toggle Terminal", "Ctrl + `")
+                    ShortcutHintRow("Toggle Primary Side Bar", "Ctrl + B")
+                    ShortcutHintRow("Save Active File", "Ctrl + S")
+                }
+            }
+        } else {
+            MonacoWebView(
+                activeTab = activeTab,
+                onContentChanged = { fileId, content, isDirty ->
+                    editorViewModel.onContentChanged(fileId, content, isDirty)
+                },
+                onCursorPosition = { line, col ->
+                    editorViewModel.updateCursor(line, col)
+                },
+                onWebViewReady = onWebViewReady,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShortcutHintRow(action: String, shortcut: String) {
+    Row(
+        modifier = Modifier
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = action,
+            color = VsCodeTheme.SecondaryForeground,
+            fontSize = 12.sp
         )
+        Box(
+            modifier = Modifier
+                .background(VsCodeTheme.SidebarBackground)
+                .border(1.dp, VsCodeTheme.BorderColor)
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+        ) {
+            Text(
+                text = shortcut,
+                color = VsCodeTheme.Foreground,
+                fontSize = 11.sp,
+                fontFamily = VsCodeMonospaceFont
+            )
+        }
     }
 }
 
@@ -177,4 +259,3 @@ private fun BreadcrumbsBar(tab: EditorTab) {
         }
     }
 }
-

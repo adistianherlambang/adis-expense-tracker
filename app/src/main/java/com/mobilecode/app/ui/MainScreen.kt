@@ -1,6 +1,7 @@
 package com.mobilecode.app.ui
 
 import android.content.res.Configuration
+import android.webkit.WebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import com.mobilecode.app.core.designsystem.VsCodeTheme
 import com.mobilecode.app.core.editor.EditorViewModel
+import com.mobilecode.app.core.editor.deleteCharFromEditor
+import com.mobilecode.app.core.editor.insertTextIntoEditor
 import com.mobilecode.app.core.filesystem.WorkspaceManager
 import com.mobilecode.app.core.git.GitViewModel
 import com.mobilecode.app.core.keyboard.ProgrammingAccessoryBar
@@ -56,6 +59,8 @@ fun MainScreen(
     var isSidebarVisible by remember { mutableStateOf(isLandscape || isTablet) }
     var isBottomPanelVisible by remember { mutableStateOf(true) }
     var currentActivityView by remember { mutableStateOf(ActivityView.EXPLORER) }
+    var editorWebView by remember { mutableStateOf<WebView?>(null) }
+    var accessoryTarget by remember { mutableStateOf("EDIT") }
 
     val currentWorkspaceDir by workspaceManager.currentWorkspaceDir.collectAsState()
     val cursor by editorViewModel.cursor.collectAsState()
@@ -142,6 +147,7 @@ fun MainScreen(
                     // Editor Area
                     EditorArea(
                         editorViewModel = editorViewModel,
+                        onWebViewReady = { editorWebView = it },
                         modifier = Modifier.weight(1f)
                     )
 
@@ -157,18 +163,34 @@ fun MainScreen(
 
             // Virtual Programming Keyboard Toolbar
             ProgrammingAccessoryBar(
+                targetMode = accessoryTarget,
+                onToggleTarget = {
+                    accessoryTarget = if (accessoryTarget == "EDIT") "TERM" else "EDIT"
+                },
                 onKeyInserted = { key ->
-                    terminalViewModel.sendInput(key)
+                    if (accessoryTarget == "EDIT") {
+                        editorWebView?.let { insertTextIntoEditor(it, key) }
+                    } else {
+                        terminalViewModel.sendInput(key)
+                    }
                 },
                 onSpecialKey = { special ->
-                    when (special) {
-                        "ESC" -> terminalViewModel.sendInput("\u001b")
-                        "TAB" -> terminalViewModel.sendInput("\t")
-                        "CTRL" -> terminalViewModel.sendInput("\u0003")
-                        "UP" -> terminalViewModel.sendInput("\u001b[A")
-                        "DOWN" -> terminalViewModel.sendInput("\u001b[B")
-                        "LEFT" -> terminalViewModel.sendInput("\u001b[D")
-                        "RIGHT" -> terminalViewModel.sendInput("\u001b[C")
+                    if (accessoryTarget == "EDIT") {
+                        when (special) {
+                            "TAB" -> editorWebView?.let { insertTextIntoEditor(it, "  ") }
+                            "DEL" -> editorWebView?.let { deleteCharFromEditor(it) }
+                            else -> {}
+                        }
+                    } else {
+                        when (special) {
+                            "ESC" -> terminalViewModel.sendInput("\u001b")
+                            "TAB" -> terminalViewModel.sendInput("\t")
+                            "CTRL" -> terminalViewModel.sendInput("\u0003")
+                            "UP" -> terminalViewModel.sendInput("\u001b[A")
+                            "DOWN" -> terminalViewModel.sendInput("\u001b[B")
+                            "LEFT" -> terminalViewModel.sendInput("\u001b[D")
+                            "RIGHT" -> terminalViewModel.sendInput("\u001b[C")
+                        }
                     }
                 }
             )

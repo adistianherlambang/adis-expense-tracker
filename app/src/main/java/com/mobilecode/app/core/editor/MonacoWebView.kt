@@ -13,7 +13,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -27,9 +30,11 @@ fun MonacoWebView(
     activeTab: EditorTab?,
     onContentChanged: (fileId: String, content: String, isDirty: Boolean) -> Unit,
     onCursorPosition: (line: Int, column: Int) -> Unit,
+    onWebViewReady: ((WebView) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    var isPageReady by remember { mutableStateOf(false) }
 
     if (activeTab == null) {
         Box(
@@ -39,7 +44,7 @@ fun MonacoWebView(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "No open editor. Select a file from Explorer to begin.",
+                text = "No open editor. Select a file from Explorer to begin editing.",
                 color = VsCodeTheme.SecondaryForeground
             )
         }
@@ -49,6 +54,9 @@ fun MonacoWebView(
     val webView = remember {
         WebView(context).apply {
             setBackgroundColor(Color.parseColor("#1E1E1E"))
+            isFocusable = true
+            isFocusableInTouchMode = true
+
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -63,6 +71,7 @@ fun MonacoWebView(
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    isPageReady = true
                     sendOpenFile(this@apply, activeTab)
                 }
             }
@@ -72,18 +81,24 @@ fun MonacoWebView(
                     onContentChangedCallback = onContentChanged,
                     onCursorPositionCallback = onCursorPosition,
                     onEditorReadyCallback = {
-                        post { sendOpenFile(this, activeTab) }
+                        post {
+                            isPageReady = true
+                            sendOpenFile(this, activeTab)
+                        }
                     }
                 ),
                 "AndroidEditorBridge"
             )
 
             loadUrl("file:///android_asset/monaco/index.html")
+            onWebViewReady?.invoke(this)
         }
     }
 
-    LaunchedEffect(activeTab.id) {
-        sendOpenFile(webView, activeTab)
+    LaunchedEffect(activeTab.id, isPageReady) {
+        if (isPageReady) {
+            sendOpenFile(webView, activeTab)
+        }
     }
 
     DisposableEffect(Unit) {
@@ -94,11 +109,16 @@ fun MonacoWebView(
 
     AndroidView(
         factory = { webView },
-        modifier = modifier.fillMaxSize()
+        modifier = modifier.fillMaxSize(),
+        update = { view ->
+            if (isPageReady) {
+                sendOpenFile(view, activeTab)
+            }
+        }
     )
 }
 
-private fun sendOpenFile(webView: WebView, tab: EditorTab) {
+fun sendOpenFile(webView: WebView, tab: EditorTab) {
     val safeContent = JSONObject.quote(tab.content)
     val safeId = JSONObject.quote(tab.id)
     val safePath = JSONObject.quote(tab.file.absolutePath)
@@ -108,3 +128,11 @@ private fun sendOpenFile(webView: WebView, tab: EditorTab) {
     webView.evaluateJavascript(js, null)
 }
 
+fun insertTextIntoEditor(webView: WebView, text: String) {
+    val safeText = JSONObject.quote(text)
+    webView.evaluateJavascript("window.monacoBridge && window.monacoBridge.insertText($safeText);", null)
+}
+
+fun deleteCharFromEditor(webView: WebView) {
+    webView.evaluateJavascript("window.monacoBridge && window.monacoBridge.deleteChar();", null)
+}

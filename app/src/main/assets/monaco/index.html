@@ -9,8 +9,6 @@
             box-sizing: border-box;
             margin: 0;
             padding: 0;
-            user-select: none;
-            -webkit-user-select: none;
         }
         html, body {
             width: 100%;
@@ -20,17 +18,7 @@
             color: #d4d4d4;
             font-family: Consolas, Menlo, Monaco, "Courier New", monospace;
         }
-        #container {
-            width: 100%;
-            height: 100%;
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-        }
-        /* Offline Monaco Fallback Surface */
-        .fallback-editor {
+        .editor-container {
             display: flex;
             width: 100%;
             height: 100%;
@@ -42,7 +30,7 @@
             position: relative;
         }
         .gutter {
-            width: 48px;
+            width: 52px;
             background-color: #1e1e1e;
             color: #858585;
             text-align: right;
@@ -50,7 +38,10 @@
             border-right: 1px solid #2d2d2d;
             overflow: hidden;
             user-select: none;
+            -webkit-user-select: none;
             flex-shrink: 0;
+            font-size: 13px;
+            line-height: 22px;
         }
         .code-surface-wrapper {
             flex-grow: 1;
@@ -58,103 +49,71 @@
             position: relative;
             overflow: auto;
             -webkit-overflow-scrolling: touch;
+            background-color: #1e1e1e;
         }
         .code-textarea {
-            position: absolute;
-            top: 0;
-            left: 0;
             width: 100%;
-            height: 100%;
-            background: transparent;
+            min-height: 100%;
+            height: auto;
+            background: #1e1e1e;
             color: #d4d4d4;
-            font-family: inherit;
-            font-size: inherit;
-            line-height: inherit;
-            padding: 10px 12px;
+            font-family: Consolas, Menlo, Monaco, monospace;
+            font-size: 14px;
+            line-height: 22px;
+            padding: 10px 14px;
             border: none;
             outline: none;
             resize: none;
             white-space: pre;
             overflow-wrap: normal;
+            overflow-x: auto;
             tab-size: 2;
-            -webkit-user-select: text;
-            user-select: text;
+            -moz-tab-size: 2;
+            user-select: text !important;
+            -webkit-user-select: text !important;
             caret-color: #569cd6;
+            display: block;
         }
         .minimap-bar {
-            width: 60px;
+            width: 50px;
             background-color: #1a1a1a;
             border-left: 1px solid #2d2d2d;
             height: 100%;
             flex-shrink: 0;
             opacity: 0.6;
+            user-select: none;
+            -webkit-user-select: none;
         }
     </style>
 </head>
 <body>
-    <div id="container"></div>
+    <div class="editor-container" id="editor-container" onclick="focusEditor()">
+        <div class="gutter" id="line-gutter">1</div>
+        <div class="code-surface-wrapper" id="code-wrapper" onclick="focusEditor()">
+            <textarea class="code-textarea" id="editor-textarea" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder=""></textarea>
+        </div>
+        <div class="minimap-bar" id="minimap"></div>
+    </div>
 
     <script>
         (function() {
             let activeFileId = null;
             let activeFilePath = null;
-            let currentLanguage = "javascript";
+            let currentLanguage = "plaintext";
             let originalContent = "";
             let currentContent = "";
             let isDirty = false;
             let debounceTimer = null;
 
-            // Element references
-            const container = document.getElementById('container');
-            let gutterEl = null;
-            let textareaEl = null;
+            const gutterEl = document.getElementById('line-gutter');
+            const textareaEl = document.getElementById('editor-textarea');
+            const codeWrapper = document.getElementById('code-wrapper');
 
-            function initFallbackEditor() {
-                container.innerHTML = `
-                    <div class="fallback-editor">
-                        <div class="gutter" id="line-gutter">1</div>
-                        <div class="code-surface-wrapper">
-                            <textarea class="code-textarea" id="editor-textarea" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
-                        </div>
-                        <div class="minimap-bar" id="minimap"></div>
-                    </div>
-                `;
-
-                gutterEl = document.getElementById('line-gutter');
-                textareaEl = document.getElementById('editor-textarea');
-
-                textareaEl.addEventListener('input', function() {
-                    currentContent = textareaEl.value;
-                    isDirty = (currentContent !== originalContent);
-                    updateLineNumbers();
-                    updateCursor();
-
-                    if (debounceTimer) clearTimeout(debounceTimer);
-                    debounceTimer = setTimeout(function() {
-                        if (window.AndroidEditorBridge) {
-                            window.AndroidEditorBridge.onContentChanged(activeFileId, currentContent, isDirty);
-                        }
-                    }, 150);
-                });
-
-                textareaEl.addEventListener('keyup', updateCursor);
-                textareaEl.addEventListener('click', updateCursor);
-                textareaEl.addEventListener('scroll', function() {
-                    gutterEl.scrollTop = textareaEl.scrollTop;
-                });
-
-                // Tab key handler (insert 2 spaces)
-                textareaEl.addEventListener('keydown', function(e) {
-                    if (e.key === 'Tab') {
-                        e.preventDefault();
-                        const start = this.selectionStart;
-                        const end = this.selectionEnd;
-                        this.value = this.value.substring(0, start) + "  " + this.value.substring(end);
-                        this.selectionStart = this.selectionEnd = start + 2;
-                        textareaEl.dispatchEvent(new Event('input'));
-                    }
-                });
-            }
+            window.focusEditor = function() {
+                if (textareaEl) {
+                    textareaEl.focus();
+                }
+            };
 
             function updateLineNumbers() {
                 if (!gutterEl || !textareaEl) return;
@@ -178,36 +137,71 @@
                 }
             }
 
+            textareaEl.addEventListener('input', function() {
+                currentContent = textareaEl.value;
+                isDirty = (currentContent !== originalContent);
+                updateLineNumbers();
+                updateCursor();
+
+                if (debounceTimer) clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(function() {
+                    if (window.AndroidEditorBridge && activeFileId) {
+                        window.AndroidEditorBridge.onContentChanged(activeFileId, currentContent, isDirty);
+                    }
+                }, 100);
+            });
+
+            textareaEl.addEventListener('keyup', updateCursor);
+            textareaEl.addEventListener('click', updateCursor);
+            textareaEl.addEventListener('focus', updateCursor);
+            textareaEl.addEventListener('scroll', function() {
+                gutterEl.scrollTop = textareaEl.scrollTop;
+            });
+
+            // Tab key handler (insert 2 spaces)
+            textareaEl.addEventListener('keydown', function(e) {
+                if (e.key === 'Tab') {
+                    e.preventDefault();
+                    const start = this.selectionStart;
+                    const end = this.selectionEnd;
+                    this.value = this.value.substring(0, start) + "  " + this.value.substring(end);
+                    this.selectionStart = this.selectionEnd = start + 2;
+                    textareaEl.dispatchEvent(new Event('input'));
+                }
+            });
+
             // Public bridge methods invoked by Kotlin
             window.monacoBridge = {
                 openFile: function(fileId, path, content, language, readOnly) {
                     activeFileId = fileId;
                     activeFilePath = path;
                     currentLanguage = language || "plaintext";
-                    originalContent = content || "";
+                    originalContent = (content !== null && content !== undefined) ? content : "";
                     currentContent = originalContent;
                     isDirty = false;
-
-                    if (!textareaEl) initFallbackEditor();
 
                     textareaEl.value = currentContent;
                     textareaEl.readOnly = !!readOnly;
                     updateLineNumbers();
                     updateCursor();
 
+                    // Notify Kotlin of confirmed open
                     if (window.AndroidEditorBridge) {
                         window.AndroidEditorBridge.onContentChanged(activeFileId, currentContent, false);
                     }
                 },
 
                 getContent: function() {
-                    return currentContent;
+                    return textareaEl ? textareaEl.value : currentContent;
                 },
 
                 saveFile: function() {
+                    if (textareaEl) {
+                        currentContent = textareaEl.value;
+                    }
                     originalContent = currentContent;
                     isDirty = false;
-                    if (window.AndroidEditorBridge) {
+                    if (window.AndroidEditorBridge && activeFileId) {
                         window.AndroidEditorBridge.onContentChanged(activeFileId, currentContent, false);
                     }
                     return currentContent;
@@ -215,11 +209,24 @@
 
                 insertText: function(text) {
                     if (!textareaEl) return;
+                    textareaEl.focus();
                     const start = textareaEl.selectionStart;
                     const end = textareaEl.selectionEnd;
                     textareaEl.value = textareaEl.value.substring(0, start) + text + textareaEl.value.substring(end);
                     textareaEl.selectionStart = textareaEl.selectionEnd = start + text.length;
                     textareaEl.dispatchEvent(new Event('input'));
+                },
+
+                deleteChar: function() {
+                    if (!textareaEl) return;
+                    textareaEl.focus();
+                    const start = textareaEl.selectionStart;
+                    const end = textareaEl.selectionEnd;
+                    if (start > 0 && start === end) {
+                        textareaEl.value = textareaEl.value.substring(0, start - 1) + textareaEl.value.substring(end);
+                        textareaEl.selectionStart = textareaEl.selectionEnd = start - 1;
+                        textareaEl.dispatchEvent(new Event('input'));
+                    }
                 },
 
                 setFont: function(family, size, lineHeight) {
@@ -255,9 +262,9 @@
                 }
             };
 
-            // Initialize editor on DOM ready
+            // Notify native Android bridge that DOM and bridge methods are ready
             document.addEventListener('DOMContentLoaded', function() {
-                initFallbackEditor();
+                updateLineNumbers();
                 if (window.AndroidEditorBridge) {
                     window.AndroidEditorBridge.onEditorReady();
                 }
@@ -266,4 +273,3 @@
     </script>
 </body>
 </html>
-
