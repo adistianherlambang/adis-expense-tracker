@@ -21,53 +21,76 @@
             line-height: 18px;
         }
         #terminal-container {
+            display: flex;
+            flex-direction: column;
             width: 100%;
             height: 100%;
-            padding: 6px 10px;
+            padding: 8px 12px;
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
+            background-color: #1e1e1e;
+            cursor: text;
+        }
+        #terminal-output {
             white-space: pre-wrap;
             word-break: break-all;
             user-select: text;
             -webkit-user-select: text;
+            flex-shrink: 0;
         }
-        .term-cursor {
-            display: inline-block;
-            width: 8px;
-            height: 15px;
-            background-color: #569cd6;
-            vertical-align: middle;
-            animation: blink 1s step-end infinite;
+        .terminal-input-row {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            margin-top: 4px;
+            flex-shrink: 0;
         }
-        @keyframes blink {
-            from, to { opacity: 1; }
-            50% { opacity: 0; }
+        .terminal-prompt {
+            color: #4ec9b0;
+            font-weight: bold;
+            margin-right: 6px;
+            user-select: none;
+            -webkit-user-select: none;
         }
-        /* Hidden input to capture soft keyboard and physical keyboard events */
-        #hidden-input {
-            position: absolute;
-            left: -9999px;
-            top: -9999px;
-            opacity: 0;
-            width: 1px;
-            height: 1px;
+        .term-input {
+            flex-grow: 1;
+            background: transparent;
+            color: #ffffff;
+            font-family: Consolas, Menlo, Monaco, monospace;
+            font-size: 13px;
+            border: none;
+            outline: none;
+            caret-color: #569cd6;
+            padding: 2px 0;
+            width: 100%;
         }
     </style>
 </head>
 <body>
-    <div id="terminal-container" onclick="focusTerminal()">
-        <span id="terminal-output"></span><span class="term-cursor"></span>
+    <div id="terminal-container" onclick="focusInput()">
+        <div id="terminal-output"></div>
+        <div class="terminal-input-row">
+            <span class="terminal-prompt">$</span>
+            <input type="text" id="term-input" class="term-input" autofocus autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Enter shell command...">
+        </div>
     </div>
-    <input type="text" id="hidden-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
 
     <script>
         (function() {
             let activeSessionId = "term-1";
             const outputEl = document.getElementById('terminal-output');
             const containerEl = document.getElementById('terminal-container');
-            const inputEl = document.getElementById('hidden-input');
+            const inputEl = document.getElementById('term-input');
 
-            // ANSI 16-color palette
+            const history = [];
+            let historyIndex = -1;
+
+            window.focusInput = function() {
+                if (inputEl) {
+                    inputEl.focus();
+                }
+            };
+
             const ansiColors = {
                 '30': '#000000', '31': '#cd3131', '32': '#0dbc79', '33': '#e5e510',
                 '34': '#2472c8', '35': '#bc3fbc', '36': '#11a8cd', '37': '#e5e5e5',
@@ -76,10 +99,8 @@
             };
 
             function parseAnsi(text) {
-                // Basic ANSI parser for color escapes \x1b[...m
                 let html = "";
                 let inTag = false;
-                let currentSpan = "";
                 const regex = /\x1b\[([0-9;]*)m/g;
                 let lastIndex = 0;
                 let match;
@@ -113,45 +134,58 @@
                     .replace(/>/g, '&gt;');
             }
 
-            window.focusTerminal = function() {
-                if (inputEl) inputEl.focus();
-            };
-
             inputEl.addEventListener('keydown', function(e) {
-                let data = null;
-                if (e.key === 'Enter') data = '\r';
-                else if (e.key === 'Backspace') data = '\x7f';
-                else if (e.key === 'Tab') { e.preventDefault(); data = '\t'; }
-                else if (e.key === 'ArrowUp') data = '\x1b[A';
-                else if (e.key === 'ArrowDown') data = '\x1b[B';
-                else if (e.key === 'ArrowRight') data = '\x1b[C';
-                else if (e.key === 'ArrowLeft') data = '\x1b[D';
-                else if (e.ctrlKey && e.key.toLowerCase() === 'c') data = '\x03';
-                else if (e.ctrlKey && e.key.toLowerCase() === 'd') data = '\x04';
-                else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
-                    outputEl.innerHTML = "";
-                    data = '\x0c';
-                }
-
-                if (data && window.AndroidTerminalBridge) {
-                    window.AndroidTerminalBridge.onTerminalInput(activeSessionId, data);
+                if (e.key === 'Enter') {
                     e.preventDefault();
-                    inputEl.value = '';
-                }
-            });
+                    const command = inputEl.value;
+                    if (command.trim().length > 0) {
+                        history.push(command);
+                        historyIndex = history.length;
+                    }
 
-            inputEl.addEventListener('input', function(e) {
-                const val = inputEl.value;
-                if (val && window.AndroidTerminalBridge) {
-                    window.AndroidTerminalBridge.onTerminalInput(activeSessionId, val);
+                    // Print local command echo
+                    outputEl.innerHTML += `<div style="color: #4ec9b0; margin: 2px 0;">$ <span style="color: #ffffff;">${escapeHtml(command)}</span></div>`;
+                    containerEl.scrollTop = containerEl.scrollHeight;
+
+                    if (window.AndroidTerminalBridge) {
+                        window.AndroidTerminalBridge.onTerminalInput(activeSessionId, command + "\n");
+                    }
                     inputEl.value = '';
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (history.length > 0 && historyIndex > 0) {
+                        historyIndex--;
+                        inputEl.value = history[historyIndex];
+                    }
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (historyIndex < history.length - 1) {
+                        historyIndex++;
+                        inputEl.value = history[historyIndex];
+                    } else {
+                        historyIndex = history.length;
+                        inputEl.value = '';
+                    }
+                } else if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+                    e.preventDefault();
+                    if (window.AndroidTerminalBridge) {
+                        window.AndroidTerminalBridge.onTerminalInput(activeSessionId, "\x03");
+                    }
+                    inputEl.value = '';
+                } else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+                    e.preventDefault();
+                    outputEl.innerHTML = '';
                 }
             });
 
             // Public bridge methods invoked by Kotlin
             window.terminalBridge = {
-                setSession: function(sessionId) {
+                setSession: function(sessionId, historyText) {
                     activeSessionId = sessionId;
+                    if (historyText) {
+                        outputEl.innerHTML = parseAnsi(historyText);
+                        containerEl.scrollTop = containerEl.scrollHeight;
+                    }
                 },
 
                 write: function(sessionId, text) {
@@ -165,14 +199,18 @@
                 },
 
                 sendRaw: function(text) {
-                    if (window.AndroidTerminalBridge) {
-                        window.AndroidTerminalBridge.onTerminalInput(activeSessionId, text);
+                    if (text === '\n' || text === '\r') {
+                        const event = new KeyboardEvent('keydown', { key: 'Enter' });
+                        inputEl.dispatchEvent(event);
+                    } else {
+                        inputEl.value += text;
+                        inputEl.focus();
                     }
                 }
             };
 
             document.addEventListener('DOMContentLoaded', function() {
-                focusTerminal();
+                focusInput();
                 if (window.AndroidTerminalBridge) {
                     window.AndroidTerminalBridge.onTerminalReady();
                 }
@@ -181,4 +219,3 @@
     </script>
 </body>
 </html>
-

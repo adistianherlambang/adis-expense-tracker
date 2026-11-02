@@ -22,13 +22,18 @@ class PtyProcess(
 
     fun start() {
         try {
-            val builder = ProcessBuilder("/system/bin/sh", "-i")
+            if (!workingDir.exists()) {
+                workingDir.mkdirs()
+            }
+
+            val builder = ProcessBuilder("/system/bin/sh")
             builder.directory(workingDir)
 
             val env = builder.environment()
             env["TERM"] = "xterm-256color"
             env["HOME"] = workingDir.absolutePath
-            env["TMPDIR"] = File(workingDir.parentFile, "tmp").apply { if (!exists()) mkdirs() }.absolutePath
+            val tmpDir = File(workingDir.parentFile ?: workingDir, "tmp").apply { if (!exists()) mkdirs() }
+            env["TMPDIR"] = tmpDir.absolutePath
             val currentPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
             env["PATH"] = "$currentPath:/data/data/com.mobilecode.app/files/usr/bin"
 
@@ -40,7 +45,7 @@ class PtyProcess(
 
             // Read process output stream asynchronously
             readerJob = scope.launch {
-                val buffer = ByteArray(4096)
+                val buffer = ByteArray(2048)
                 val stream = stdout ?: return@launch
                 try {
                     while (isActive) {
@@ -50,19 +55,20 @@ class PtyProcess(
                         onOutputReceived(sessionId, text)
                     }
                 } catch (e: Exception) {
-                    onOutputReceived(sessionId, "\r\n[Process terminated: ${e.message}]\r\n")
+                    onOutputReceived(sessionId, "\r\n[Shell exited: ${e.message}]\r\n")
                 }
             }
 
             // Print banner and initial prompt
             onOutputReceived(
                 sessionId,
-                "\u001b[1;34mMobile Code Terminal Shell\u001b[0m\r\n" +
-                "Working directory: \u001b[32m${workingDir.absolutePath}\u001b[0m\r\n\r\n"
+                "Mobile Code Terminal (Android Shell)\r\n" +
+                "Directory: ${workingDir.absolutePath}\r\n" +
+                "Type commands like 'ls', 'pwd', 'date' and press Enter\r\n\r\n"
             )
 
         } catch (e: Exception) {
-            onOutputReceived(sessionId, "\u001b[31mFailed to start shell: ${e.message}\u001b[0m\r\n")
+            onOutputReceived(sessionId, "Failed to start shell process: ${e.message}\r\n")
         }
     }
 
@@ -72,7 +78,7 @@ class PtyProcess(
                 stdin?.write(data.toByteArray(Charsets.UTF_8))
                 stdin?.flush()
             } catch (e: Exception) {
-                onOutputReceived(sessionId, "\r\n[Failed to write to stdin: ${e.message}]\r\n")
+                onOutputReceived(sessionId, "\r\n[Input write error: ${e.message}]\r\n")
             }
         }
     }
@@ -88,4 +94,3 @@ class PtyProcess(
         }
     }
 }
-

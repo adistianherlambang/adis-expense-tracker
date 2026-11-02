@@ -25,6 +25,9 @@ class EditorViewModel(
     private val _diagnostics = MutableStateFlow(EditorDiagnostics(0, 0))
     val diagnostics: StateFlow<EditorDiagnostics> = _diagnostics.asStateFlow()
 
+    private val _problems = MutableStateFlow<List<DiagnosticItem>>(emptyList())
+    val problems: StateFlow<List<DiagnosticItem>> = _problems.asStateFlow()
+
     val activeTab: EditorTab?
         get() = _tabs.value.getOrNull(_activeTabIndex.value)
 
@@ -33,6 +36,7 @@ class EditorViewModel(
             val existingIndex = _tabs.value.indexOfFirst { it.file.absolutePath == file.absolutePath }
             if (existingIndex != -1) {
                 _activeTabIndex.value = existingIndex
+                runDiagnostics(_tabs.value[existingIndex])
                 return@launch
             }
 
@@ -64,12 +68,22 @@ class EditorViewModel(
             val updatedTabs = _tabs.value + newTab
             _tabs.value = updatedTabs
             _activeTabIndex.value = updatedTabs.size - 1
+            runDiagnostics(newTab)
         }
+    }
+
+    private fun runDiagnostics(tab: EditorTab) {
+        val items = DiagnosticsEngine.analyze(tab.file, tab.content)
+        _problems.value = items
+        val errors = items.count { it.severity == DiagnosticSeverity.ERROR }
+        val warnings = items.count { it.severity == DiagnosticSeverity.WARNING }
+        _diagnostics.value = EditorDiagnostics(errors, warnings)
     }
 
     fun selectTab(index: Int) {
         if (index in _tabs.value.indices) {
             _activeTabIndex.value = index
+            runDiagnostics(_tabs.value[index])
         }
     }
 
@@ -79,24 +93,35 @@ class EditorViewModel(
             currentTabs.removeAt(index)
             _tabs.value = currentTabs
             val currentActive = _activeTabIndex.value
-            _activeTabIndex.value = when {
+            val newActive = when {
                 currentTabs.isEmpty() -> -1
                 currentActive >= currentTabs.size -> currentTabs.size - 1
                 currentActive == index -> index.coerceAtMost(currentTabs.size - 1)
                 else -> currentActive
             }
+            _activeTabIndex.value = newActive
+            if (newActive != -1) {
+                runDiagnostics(currentTabs[newActive])
+            } else {
+                _problems.value = emptyList()
+                _diagnostics.value = EditorDiagnostics(0, 0)
+            }
         }
     }
 
     fun onContentChanged(fileId: String, newContent: String, isDirty: Boolean) {
+        var changedTab: EditorTab? = null
         val currentTabs = _tabs.value.map { tab ->
             if (tab.id == fileId) {
-                tab.copy(content = newContent, isDirty = isDirty)
+                val updated = tab.copy(content = newContent, isDirty = isDirty)
+                changedTab = updated
+                updated
             } else {
                 tab
             }
         }
         _tabs.value = currentTabs
+        changedTab?.let { runDiagnostics(it) }
     }
 
     fun updateCursor(line: Int, column: Int) {

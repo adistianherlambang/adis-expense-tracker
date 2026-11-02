@@ -155,6 +155,10 @@ fun MainScreen(
                     if (isBottomPanelVisible) {
                         BottomPanel(
                             terminalViewModel = terminalViewModel,
+                            editorViewModel = editorViewModel,
+                            onNavigateToFile = { file, line ->
+                                editorViewModel.openFile(file)
+                            },
                             onClosePanel = { isBottomPanelVisible = false }
                         )
                     }

@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -21,15 +24,20 @@ import org.json.JSONObject
 @Composable
 fun TerminalWebView(
     activeSessionId: String,
+    initialHistory: String = "",
     outputEvents: SharedFlow<Pair<String, String>>,
     onTerminalInput: (sessionId: String, data: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    var isReady by remember { mutableStateOf(false) }
 
     val webView = remember {
         WebView(context).apply {
             setBackgroundColor(Color.parseColor("#1E1E1E"))
+            isFocusable = true
+            isFocusableInTouchMode = true
+
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -41,17 +49,23 @@ fun TerminalWebView(
                 setSupportZoom(false)
             }
             webChromeClient = WebChromeClient()
-            webViewClient = WebViewClient()
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    isReady = true
+                    val js = "window.terminalBridge && window.terminalBridge.setSession(${JSONObject.quote(activeSessionId)}, ${JSONObject.quote(initialHistory)});"
+                    evaluateJavascript(js, null)
+                }
+            }
 
             addJavascriptInterface(
                 TerminalBridge(
                     onInputCallback = onTerminalInput,
                     onTerminalReadyCallback = {
                         post {
-                            evaluateJavascript(
-                                "window.terminalBridge && window.terminalBridge.setSession(${JSONObject.quote(activeSessionId)});",
-                                null
-                            )
+                            isReady = true
+                            val js = "window.terminalBridge && window.terminalBridge.setSession(${JSONObject.quote(activeSessionId)}, ${JSONObject.quote(initialHistory)});"
+                            evaluateJavascript(js, null)
                         }
                     }
                 ),
@@ -62,17 +76,21 @@ fun TerminalWebView(
         }
     }
 
-    LaunchedEffect(activeSessionId) {
-        val js = "window.terminalBridge && window.terminalBridge.setSession(${JSONObject.quote(activeSessionId)});"
-        webView.evaluateJavascript(js, null)
+    LaunchedEffect(activeSessionId, isReady) {
+        if (isReady) {
+            val js = "window.terminalBridge && window.terminalBridge.setSession(${JSONObject.quote(activeSessionId)}, ${JSONObject.quote(initialHistory)});"
+            webView.evaluateJavascript(js, null)
+        }
     }
 
     LaunchedEffect(outputEvents) {
         outputEvents.collect { (sessionId, data) ->
-            val safeData = JSONObject.quote(data)
-            val safeSession = JSONObject.quote(sessionId)
-            val js = "window.terminalBridge && window.terminalBridge.write($safeSession, $safeData);"
-            webView.evaluateJavascript(js, null)
+            if (sessionId == activeSessionId) {
+                val safeData = JSONObject.quote(data)
+                val safeSession = JSONObject.quote(sessionId)
+                val js = "window.terminalBridge && window.terminalBridge.write($safeSession, $safeData);"
+                webView.evaluateJavascript(js, null)
+            }
         }
     }
 
@@ -87,4 +105,3 @@ fun TerminalWebView(
         modifier = modifier.fillMaxSize()
     )
 }
-

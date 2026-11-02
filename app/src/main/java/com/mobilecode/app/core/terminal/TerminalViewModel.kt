@@ -51,6 +51,7 @@ class TerminalViewModel(
             sessionId = sessionId,
             workingDir = workingDir,
             onOutputReceived = { id, data ->
+                _sessions.value.find { it.id == id }?.append(data)
                 viewModelScope.launch {
                     _outputEvents.emit(Pair(id, data))
                 }
@@ -63,6 +64,14 @@ class TerminalViewModel(
         _sessions.value = updated
         _activeSessionIndex.value = updated.size - 1
         return newSession
+    }
+
+    fun getSessionHistory(sessionId: String): String {
+        return _sessions.value.find { it.id == sessionId }?.getHistory() ?: ""
+    }
+
+    fun clearActiveSession() {
+        activeSession?.clear()
     }
 
     fun selectSession(index: Int) {
