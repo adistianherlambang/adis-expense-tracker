@@ -4,23 +4,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -43,20 +38,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -78,7 +64,6 @@ fun TerminalWebView(
 
     val scrollState = rememberScrollState()
     val focusRequester = remember { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
     var isInputFocused by remember { mutableStateOf(false) }
 
     var textFieldValue by remember {
@@ -96,7 +81,7 @@ fun TerminalWebView(
     }
 
     // Auto-scroll to bottom when output or input changes
-    LaunchedEffect(outputText, commandInput) {
+    LaunchedEffect(outputText, textFieldValue.text) {
         scrollState.animateScrollTo(scrollState.maxValue)
     }
 
@@ -154,144 +139,74 @@ fun TerminalWebView(
             }
         }
 
-        // Scrollable Terminal Output Area (Tapping anywhere focuses input & opens keyboard!)
-        Column(
+        // Full-Surface BasicTextField (identical touch & IME mechanism to MonacoWebView)
+        BasicTextField(
+            value = textFieldValue,
+            onValueChange = { newVal ->
+                onTerminalFocused?.invoke()
+                if (newVal.text.contains("\n")) {
+                    val clean = newVal.text.replace("\n", "").replace("\r", "")
+                    textFieldValue = TextFieldValue("", TextRange(0))
+                    terminalViewModel.updateCommandInput(clean)
+                    terminalViewModel.submitCurrentCommand()
+                } else {
+                    textFieldValue = newVal
+                    terminalViewModel.updateCommandInput(newVal.text)
+                }
+            },
+            textStyle = TextStyle(
+                color = Color.White,
+                fontSize = 13.sp,
+                fontFamily = VsCodeMonospaceFont
+            ),
+            cursorBrush = SolidColor(VsCodeTheme.FocusBorder),
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
-                .background(Color(0xFF1E1E1E))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    onTerminalFocused?.invoke()
-                    focusRequester.requestFocus()
-                    keyboardController?.show()
-                }
-                .verticalScroll(scrollState)
-                .padding(horizontal = 10.dp, vertical = 8.dp)
-        ) {
-            Text(
-                text = buildAnnotatedString {
-                    append(outputText)
-                    withStyle(SpanStyle(color = Color(0xFF4EC9B0), fontWeight = FontWeight.Bold)) {
-                        append("$promptPrefix ")
-                    }
-                    withStyle(SpanStyle(color = Color.White)) {
-                        append(commandInput)
-                    }
-                    withStyle(SpanStyle(color = VsCodeTheme.FocusBorder, fontWeight = FontWeight.Bold)) {
-                        append("█")
+                .fillMaxSize()
+                .focusRequester(focusRequester)
+                .onFocusChanged { state ->
+                    isInputFocused = state.isFocused
+                    if (state.isFocused) {
+                        onTerminalFocused?.invoke()
                     }
                 },
-                color = Color(0xFFD4D4D4),
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-                fontFamily = VsCodeMonospaceFont
-            )
-        }
-
-        // Dedicated Interactive Shell Input Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(40.dp)
-                .background(Color(0xFF252526))
-                .border(
-                    width = 1.dp,
-                    color = if (isInputFocused) VsCodeTheme.FocusBorder else VsCodeTheme.BorderColor
-                )
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = promptPrefix,
-                color = Color(0xFF4EC9B0),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = VsCodeMonospaceFont
-            )
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(30.dp)
-                    .background(Color(0xFF1E1E1E), RoundedCornerShape(3.dp))
-                    .border(0.5.dp, Color(0xFF3C3C3C), RoundedCornerShape(3.dp))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        onTerminalFocused?.invoke()
-                        focusRequester.requestFocus()
-                        keyboardController?.show()
-                    }
-                    .padding(horizontal = 8.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                BasicTextField(
-                    value = textFieldValue,
-                    onValueChange = { newVal ->
-                        if (newVal.text.contains("\n")) {
-                            val clean = newVal.text.replace("\n", "").replace("\r", "")
-                            terminalViewModel.updateCommandInput(clean)
-                            terminalViewModel.submitCurrentCommand()
-                        } else {
-                            textFieldValue = newVal
-                            terminalViewModel.updateCommandInput(newVal.text)
-                        }
-                    },
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontFamily = VsCodeMonospaceFont
-                    ),
-                    cursorBrush = SolidColor(VsCodeTheme.FocusBorder),
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.None,
-                        autoCorrectEnabled = false,
-                        keyboardType = KeyboardType.Ascii,
-                        imeAction = ImeAction.Send
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onSend = { terminalViewModel.submitCurrentCommand() },
-                        onDone = { terminalViewModel.submitCurrentCommand() }
-                    ),
+            decorationBox = { innerTextField ->
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(focusRequester)
-                        .onFocusChanged { state ->
-                            isInputFocused = state.isFocused
-                            if (state.isFocused) {
-                                onTerminalFocused?.invoke()
-                            }
-                        }
-                        .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-                                terminalViewModel.submitCurrentCommand()
-                                true
-                            } else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                                terminalViewModel.navigateHistoryUp()
-                                true
-                            } else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                terminalViewModel.navigateHistoryDown()
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                    decorationBox = { innerTextField ->
+                        .fillMaxSize()
+                        .background(Color(0xFF1E1E1E))
+                ) {
+                    // 1. Top Command Input Bar (Always visible above keyboard)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(38.dp)
+                            .background(Color(0xFF252526))
+                            .border(
+                                width = 1.dp,
+                                color = if (isInputFocused) VsCodeTheme.FocusBorder else VsCodeTheme.BorderColor
+                            )
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "$promptPrefix ",
+                            color = Color(0xFF4EC9B0),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = VsCodeMonospaceFont
+                        )
+
                         Box(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = 4.dp),
                             contentAlignment = Alignment.CenterStart
                         ) {
                             if (textFieldValue.text.isEmpty()) {
                                 Text(
                                     text = if (replMode == "SH") {
-                                        "Ketik perintah (node, python, npm, ls, git)..."
+                                        "Ketik perintah di sini (node, python, npm, ls, git)..."
                                     } else {
                                         "Ketik ekspresi REPL atau .exit untuk keluar..."
                                     },
@@ -303,60 +218,89 @@ fun TerminalWebView(
                             }
                             innerTextField()
                         }
+
+                        // History Up
+                        IconButton(
+                            onClick = { terminalViewModel.navigateHistoryUp() },
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowUp,
+                                contentDescription = "Previous Command",
+                                tint = VsCodeTheme.Foreground,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        // History Down
+                        IconButton(
+                            onClick = { terminalViewModel.navigateHistoryDown() },
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Next Command",
+                                tint = VsCodeTheme.Foreground,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        // Run / Enter Button
+                        Row(
+                            modifier = Modifier
+                                .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(3.dp))
+                                .clickable {
+                                    terminalViewModel.submitCurrentCommand()
+                                    textFieldValue = TextFieldValue("", TextRange(0))
+                                }
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Run",
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "Run",
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
-                )
-            }
 
-            Spacer(modifier = Modifier.width(4.dp))
-
-            // History Up
-            IconButton(
-                onClick = { terminalViewModel.navigateHistoryUp() },
-                modifier = Modifier.size(26.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowUp,
-                    contentDescription = "Previous Command",
-                    tint = VsCodeTheme.Foreground,
-                    modifier = Modifier.size(16.dp)
-                )
+                    // 2. Scrollable Terminal Output Area + Live Prompt Mirror
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .verticalScroll(scrollState)
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = buildAnnotatedString {
+                                append(outputText)
+                                withStyle(SpanStyle(color = Color(0xFF4EC9B0), fontWeight = FontWeight.Bold)) {
+                                    append("$promptPrefix ")
+                                }
+                                withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) {
+                                    append(textFieldValue.text)
+                                }
+                                withStyle(SpanStyle(color = VsCodeTheme.FocusBorder, fontWeight = FontWeight.Bold)) {
+                                    append("█")
+                                }
+                            },
+                            color = Color(0xFFD4D4D4),
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                            fontFamily = VsCodeMonospaceFont
+                        )
+                    }
+                }
             }
-
-            // History Down
-            IconButton(
-                onClick = { terminalViewModel.navigateHistoryDown() },
-                modifier = Modifier.size(26.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Next Command",
-                    tint = VsCodeTheme.Foreground,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-
-            // Run / Enter Button
-            Row(
-                modifier = Modifier
-                    .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(3.dp))
-                    .clickable { terminalViewModel.submitCurrentCommand() }
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "Run",
-                    tint = Color.White,
-                    modifier = Modifier.size(14.dp)
-                )
-                Text(
-                    text = "Run",
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
+        )
     }
 }
