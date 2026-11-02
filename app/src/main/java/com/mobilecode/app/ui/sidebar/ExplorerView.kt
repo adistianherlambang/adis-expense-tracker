@@ -72,8 +72,8 @@ fun ExplorerView(
     var showNewFileDialog by remember { mutableStateOf(false) }
     var showNewFolderDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf<File?>(null) }
-    var newProjectName by remember { mutableStateOf("") }
-    var newFileName by remember { mutableStateOf("") }
+    var newProjectName by remember { mutableStateOf("my-project") }
+    var newFileName by remember { mutableStateOf("main.js") }
     var renameText by remember { mutableStateOf("") }
 
     val expandedFolders = remember { mutableStateMapOf<String, Boolean>() }
