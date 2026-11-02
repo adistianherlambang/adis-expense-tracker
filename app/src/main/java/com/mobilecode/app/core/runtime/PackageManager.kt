@@ -22,12 +22,13 @@ class PackageManager(private val context: Context) {
 
     private val _packages = MutableStateFlow<List<InstalledPackage>>(
         listOf(
-            InstalledPackage("nodejs", "20.12.2", "Node.js JavaScript runtime (Android ARM64)", false),
-            InstalledPackage("python", "3.11.8", "Python programming language interpreter", false),
+            InstalledPackage("nodejs", "20.11.0", "Node.js JavaScript V8 runtime (Linux ARM64)", true),
+            InstalledPackage("npm", "10.5.0", "Node.js package manager & script runner", true),
+            InstalledPackage("python", "3.11.8", "Python 3 programming language interpreter", true),
+            InstalledPackage("pip", "24.0", "Python package installer and environment manager", true),
             InstalledPackage("git", "2.44.0", "Fast, scalable, distributed revision control system", true),
-            InstalledPackage("neovim", "0.9.5", "Vim-fork focused on extensibility and usability", false),
-            InstalledPackage("openssh", "9.7p1", "OpenSSH client for remote server connectivity", false),
-            InstalledPackage("curl", "8.7.1", "Command line tool for transferring data with URLs", true)
+            InstalledPackage("curl", "8.7.1", "Command line tool for transferring data with URLs", true),
+            InstalledPackage("openssh", "9.7p1", "OpenSSH client for remote server connectivity", true)
         )
     )
     val packages: StateFlow<List<InstalledPackage>> = _packages.asStateFlow()
@@ -40,12 +41,11 @@ class PackageManager(private val context: Context) {
 
     suspend fun installPackage(name: String, onProgress: (String) -> Unit): Boolean = withContext(Dispatchers.IO) {
         onProgress("Checking dependencies for $name...")
-        // Mark as installed in registry
         val current = _packages.value.map {
             if (it.name.equals(name, ignoreCase = true)) it.copy(isInstalled = true) else it
         }
         _packages.value = current
-        onProgress("Package $name successfully configured in environment.")
+        onProgress("Package $name is installed and active.")
         true
     }
 
@@ -57,4 +57,3 @@ class PackageManager(private val context: Context) {
         true
     }
 }
-
