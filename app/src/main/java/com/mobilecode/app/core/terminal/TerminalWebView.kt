@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -49,6 +51,9 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TransformedText
@@ -70,7 +75,8 @@ fun TerminalWebView(
     val replMode by session.replModeState.collectAsState()
     val commandInput by terminalViewModel.commandInput.collectAsState()
 
-    val focusRequester = remember { FocusRequester() }
+    val topInputFocusRequester = remember { FocusRequester() }
+    val canvasFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val verticalScrollState = rememberScrollState()
 
@@ -120,113 +126,189 @@ fun TerminalWebView(
             .fillMaxSize()
             .background(VsCodeTheme.PanelBackground)
     ) {
-        // Top Action & Quick Commands Strip
+        // 1. Dedicated Top Command Input Bar (Always visible at top of Terminal, never covered by navbar/keyboard)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(30.dp)
+                .height(38.dp)
                 .background(Color(0xFF252526))
-                .border(0.5.dp, VsCodeTheme.BorderColor)
+                .border(1.dp, VsCodeTheme.FocusBorder)
                 .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
+            Text(
+                text = promptPrefix,
+                color = Color(0xFF4EC9B0),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = VsCodeMonospaceFont
+            )
+
+            Box(
                 modifier = Modifier
                     .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                val quickCommands = listOf(
-                    "node -v",
-                    "python --version",
-                    "npm init -y",
-                    "pip list",
-                    "ls -la",
-                    "pwd",
-                    "git status",
-                    "help",
-                    "clear"
-                )
-                quickCommands.forEach { qCmd ->
-                    Box(
-                        modifier = Modifier
-                            .background(Color(0xFF333333), RoundedCornerShape(3.dp))
-                            .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(3.dp))
-                            .clickable {
-                                terminalViewModel.sendCommand(qCmd)
-                            }
-                            .padding(horizontal = 7.dp, vertical = 3.dp)
+                    .fillMaxHeight()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
                     ) {
-                        Text(
-                            text = qCmd,
-                            color = VsCodeTheme.Foreground,
-                            fontSize = 10.sp,
-                            fontFamily = VsCodeMonospaceFont
-                        )
+                        onTerminalFocused?.invoke()
+                        topInputFocusRequester.requestFocus()
+                        keyboardController?.show()
+                    },
+                contentAlignment = Alignment.CenterStart
+            ) {
+                BasicTextField(
+                    value = commandInput,
+                    onValueChange = { newVal ->
+                        onTerminalFocused?.invoke()
+                        if (newVal.contains("\n")) {
+                            val clean = newVal.replace("\n", "").replace("\r", "")
+                            terminalViewModel.updateCommandInput(clean)
+                            terminalViewModel.submitCurrentCommand()
+                        } else {
+                            terminalViewModel.updateCommandInput(newVal)
+                        }
+                    },
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        color = Color.White,
+                        fontFamily = VsCodeMonospaceFont,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    cursorBrush = SolidColor(VsCodeTheme.FocusBorder),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrectEnabled = false,
+                        keyboardType = KeyboardType.Ascii,
+                        imeAction = ImeAction.Send
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onSend = { terminalViewModel.submitCurrentCommand() },
+                        onDone = { terminalViewModel.submitCurrentCommand() }
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(topInputFocusRequester)
+                        .onFocusChanged { state ->
+                            if (state.isFocused) {
+                                onTerminalFocused?.invoke()
+                            }
+                        },
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            if (commandInput.isEmpty()) {
+                                Text(
+                                    text = "Ketik perintah disini (node -v, python -V, ls, npm init)...",
+                                    color = VsCodeTheme.SecondaryForeground,
+                                    fontSize = 12.sp,
+                                    fontFamily = VsCodeMonospaceFont,
+                                    maxLines = 1
+                                )
+                            }
+                            innerTextField()
+                        }
                     }
-                }
+                )
             }
 
-            Spacer(modifier = Modifier.width(6.dp))
-
-            // History Up/Down & Run Command Controls
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            IconButton(
+                onClick = { terminalViewModel.navigateHistoryUp() },
+                modifier = Modifier.size(26.dp)
             ) {
-                IconButton(
-                    onClick = { terminalViewModel.navigateHistoryUp() },
-                    modifier = Modifier.size(24.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowUp,
-                        contentDescription = "Previous Command",
-                        tint = VsCodeTheme.Foreground,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowUp,
+                    contentDescription = "Previous Command",
+                    tint = VsCodeTheme.Foreground,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
 
-                IconButton(
-                    onClick = { terminalViewModel.navigateHistoryDown() },
-                    modifier = Modifier.size(24.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Next Command",
-                        tint = VsCodeTheme.Foreground,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
+            IconButton(
+                onClick = { terminalViewModel.navigateHistoryDown() },
+                modifier = Modifier.size(26.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Next Command",
+                    tint = VsCodeTheme.Foreground,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
 
-                Row(
+            Row(
+                modifier = Modifier
+                    .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(4.dp))
+                    .clickable {
+                        terminalViewModel.submitCurrentCommand()
+                    }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Run",
+                    tint = Color.White,
+                    modifier = Modifier.size(13.dp)
+                )
+                Text(
+                    text = "Run",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // 2. Quick Command Chips Strip
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp)
+                .background(Color(0xFF1F1F20))
+                .border(0.5.dp, VsCodeTheme.BorderColor)
+                .padding(horizontal = 8.dp)
+                .horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            val quickCommands = listOf(
+                "node -v",
+                "python --version",
+                "npm init -y",
+                "pip list",
+                "ls -la",
+                "pwd",
+                "git status",
+                "help",
+                "clear"
+            )
+            quickCommands.forEach { qCmd ->
+                Box(
                     modifier = Modifier
-                        .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(3.dp))
+                        .background(Color(0xFF333333), RoundedCornerShape(3.dp))
+                        .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(3.dp))
                         .clickable {
-                            terminalViewModel.submitCurrentCommand()
+                            terminalViewModel.sendCommand(qCmd)
                         }
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Run",
-                        tint = Color.White,
-                        modifier = Modifier.size(12.dp)
-                    )
                     Text(
-                        text = "Enter",
-                        color = Color.White,
+                        text = qCmd,
+                        color = VsCodeTheme.Foreground,
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontFamily = VsCodeMonospaceFont
                     )
                 }
             }
         }
 
-        // Main Editable Terminal Surface (Exact same architecture as MonacoWebView!)
+        // 3. Main Editable Terminal Surface (Exact same architecture as MonacoWebView!)
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -238,7 +320,7 @@ fun TerminalWebView(
                     indication = null
                 ) {
                     onTerminalFocused?.invoke()
-                    focusRequester.requestFocus()
+                    canvasFocusRequester.requestFocus()
                     keyboardController?.show()
                 }
         ) {
@@ -247,8 +329,6 @@ fun TerminalWebView(
                 onValueChange = { newValue ->
                     onTerminalFocused?.invoke()
 
-                    // 1. If only cursor/selection moved (e.g. user tapped anywhere on terminal text),
-                    // clamp cursor to the active command prompt at the bottom!
                     if (newValue.text == textFieldValue.text) {
                         val clampedStart = newValue.selection.start.coerceAtLeast(prefixText.length)
                         val clampedEnd = newValue.selection.end.coerceAtLeast(prefixText.length)
@@ -256,7 +336,6 @@ fun TerminalWebView(
                         return@BasicTextField
                     }
 
-                    // 2. If user typed at the prompt (text starts with prefixText)
                     if (newValue.text.startsWith(prefixText)) {
                         val newCmd = newValue.text.substring(prefixText.length)
                         if (newCmd.contains("\n")) {
@@ -270,15 +349,12 @@ fun TerminalWebView(
                             terminalViewModel.updateCommandInput(newCmd)
                         }
                     } else if (newValue.text.length < textFieldValue.text.length) {
-                        // User pressed backspace when commandInput was empty or inside prefixText
                         val rebuilt = prefixText + commandInput
                         textFieldValue = TextFieldValue(
                             text = rebuilt,
                             selection = TextRange(rebuilt.length)
                         )
                     } else {
-                        // User typed while cursor was accidentally inside history text:
-                        // Extract newly typed character(s) and append to commandInput
                         val diffLen = newValue.text.length - textFieldValue.text.length
                         val insertPos = (newValue.selection.start - diffLen).coerceIn(0, newValue.text.length)
                         val inserted = newValue.text.substring(insertPos, (insertPos + diffLen).coerceAtMost(newValue.text.length))
@@ -307,14 +383,14 @@ fun TerminalWebView(
                 visualTransformation = terminalVisualTransformation,
                 modifier = Modifier
                     .fillMaxSize()
-                    .focusRequester(focusRequester)
+                    .focusRequester(canvasFocusRequester)
                     .onFocusChanged { state ->
                         if (state.isFocused) {
                             onTerminalFocused?.invoke()
                         }
                     }
                     .verticalScroll(verticalScrollState)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 decorationBox = { innerTextField ->
                     Box(modifier = Modifier.fillMaxSize()) {
                         innerTextField()
@@ -331,7 +407,6 @@ private fun styleTerminalText(text: String, prefixLength: Int): AnnotatedString 
     if (text.isEmpty()) return AnnotatedString("")
     return buildAnnotatedString {
         append(text)
-        // Highlight shell prompts in VS Code Teal (#4EC9B0)
         promptLineRegex.findAll(text).forEach { match ->
             addStyle(
                 SpanStyle(color = Color(0xFF4EC9B0), fontWeight = FontWeight.Bold),
@@ -339,7 +414,6 @@ private fun styleTerminalText(text: String, prefixLength: Int): AnnotatedString 
                 match.range.last + 1
             )
         }
-        // Highlight currently typed command in bright white
         if (prefixLength in 0..text.length) {
             addStyle(
                 SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold),
