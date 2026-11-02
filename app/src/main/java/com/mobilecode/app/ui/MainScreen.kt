@@ -89,7 +89,7 @@ fun MainScreen(
         Column(modifier = Modifier.fillMaxSize()) {
             // Top Window Title Bar & Command Center
             TitleBar(
-                projectName = currentWorkspaceDir.name,
+                projectName = currentWorkspaceDir?.name,
                 onOpenCommandPalette = onOpenCommandPalette,
                 onToggleSidebar = { isSidebarVisible = !isSidebarVisible },
                 onToggleTerminal = { isBottomPanelVisible = !isBottomPanelVisible }

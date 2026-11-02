@@ -12,9 +12,9 @@ class GitViewModel(
     private val workspaceManager: WorkspaceManager
 ) : ViewModel() {
 
-    private var gitClient = GitClient(workspaceManager.currentWorkspaceDir.value)
+    private var gitClient: GitClient? = null
 
-    private val _currentBranch = MutableStateFlow("main")
+    private val _currentBranch = MutableStateFlow("-")
     val currentBranch: StateFlow<String> = _currentBranch.asStateFlow()
 
     private val _changes = MutableStateFlow<List<GitChangedFile>>(emptyList())
@@ -37,23 +37,31 @@ class GitViewModel(
     fun refresh() {
         viewModelScope.launch {
             _isRefreshing.value = true
-            gitClient = GitClient(workspaceManager.currentWorkspaceDir.value)
-            _currentBranch.value = gitClient.getCurrentBranch()
-            _changes.value = gitClient.getStatus()
+            val dir = workspaceManager.currentWorkspaceDir.value
+            if (dir != null && dir.exists()) {
+                val client = GitClient(dir)
+                gitClient = client
+                _currentBranch.value = client.getCurrentBranch()
+                _changes.value = client.getStatus()
+            } else {
+                gitClient = null
+                _currentBranch.value = "-"
+                _changes.value = emptyList()
+            }
             _isRefreshing.value = false
         }
     }
 
     fun stageFile(file: GitChangedFile) {
         viewModelScope.launch {
-            gitClient.stageFile(file.path)
+            gitClient?.stageFile(file.path)
             refresh()
         }
     }
 
     fun unstageFile(file: GitChangedFile) {
         viewModelScope.launch {
-            gitClient.unstageFile(file.path)
+            gitClient?.unstageFile(file.path)
             refresh()
         }
     }
@@ -63,7 +71,7 @@ class GitViewModel(
         if (msg.isEmpty()) return
 
         viewModelScope.launch {
-            val success = gitClient.commit(msg)
+            val success = gitClient?.commit(msg) ?: false
             if (success) {
                 _commitMessage.value = ""
                 refresh()

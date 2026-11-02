@@ -75,10 +75,7 @@ class MainActivity : ComponentActivity() {
         settingsRepository = SettingsRepository(this)
         packageManager = PackageManager(this)
 
-        // Automatically open the starter file (index.js or README.md)
-        val defaultWorkspace = workspaceManager.currentWorkspaceDir.value
-        val starterFile = defaultWorkspace.listFiles()?.firstOrNull { it.isFile }
-        starterFile?.let { editorViewModel.openFile(it) }
+        // App starts with empty workspace until user opens or creates a project folder
 
         // Start background foreground service for terminal persistence
         TerminalForegroundService.startService(this)

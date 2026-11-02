@@ -30,7 +30,7 @@ import com.mobilecode.app.core.designsystem.VsCodeTheme
 
 @Composable
 fun TitleBar(
-    projectName: String,
+    projectName: String?,
     onOpenCommandPalette: () -> Unit,
     onToggleSidebar: () -> Unit,
     onToggleTerminal: () -> Unit,
@@ -87,7 +87,7 @@ fun TitleBar(
                     modifier = Modifier.size(13.dp)
                 )
                 Text(
-                    text = "$projectName (Ctrl+Shift+P)",
+                    text = if (projectName.isNullOrBlank()) "Mobile Code (Ctrl+Shift+P)" else "$projectName (Ctrl+Shift+P)",
                     color = VsCodeTheme.SecondaryForeground,
                     fontSize = 11.sp
                 )

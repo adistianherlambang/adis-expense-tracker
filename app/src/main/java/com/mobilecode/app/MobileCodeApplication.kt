@@ -15,9 +15,8 @@ class MobileCodeApplication : Application() {
         super.onCreate()
         instance = this
 
-        // Initialize Workspace Manager and setup default project
+        // Initialize Workspace Manager without loading default sample projects
         workspaceManager = WorkspaceManager(this)
-        workspaceManager.initializeDefaultWorkspaceIfNeeded()
 
         // Create notification channel for background terminal/server processes
         createNotificationChannel()

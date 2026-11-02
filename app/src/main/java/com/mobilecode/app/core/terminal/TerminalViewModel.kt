@@ -39,7 +39,7 @@ class TerminalViewModel(
     fun createSession(customWorkingDir: File? = null): TerminalSession {
         sessionCounter++
         val sessionId = "term-$sessionCounter"
-        val workingDir = customWorkingDir ?: workspaceManager.currentWorkspaceDir.value
+        val workingDir = customWorkingDir ?: workspaceManager.currentWorkspaceDir.value ?: workspaceManager.getWorkspacesDirectory()
 
         val newSession = TerminalSession(
             id = sessionId,

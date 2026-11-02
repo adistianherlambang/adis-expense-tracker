@@ -63,14 +63,15 @@ class SearchViewModel(
     private fun triggerSearch() {
         searchJob?.cancel()
         val q = _query.value.trim()
-        if (q.isEmpty()) {
+        val dir = workspaceManager.currentWorkspaceDir.value
+        if (q.isEmpty() || dir == null) {
             _results.value = emptyList()
             return
         }
 
         searchJob = viewModelScope.launch {
             _isSearching.value = true
-            val engine = WorkspaceSearchEngine(workspaceManager.currentWorkspaceDir.value)
+            val engine = WorkspaceSearchEngine(dir)
             _results.value = engine.search(
                 query = q,
                 isRegex = _useRegex.value,

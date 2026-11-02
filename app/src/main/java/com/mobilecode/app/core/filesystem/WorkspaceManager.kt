@@ -7,67 +7,62 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 
 class WorkspaceManager(private val context: Context) {
 
-    private val _currentWorkspaceDir = MutableStateFlow<File>(getDefaultWorkspaceDirectory())
-    val currentWorkspaceDir: StateFlow<File> = _currentWorkspaceDir.asStateFlow()
+    private val _currentWorkspaceDir = MutableStateFlow<File?>(null)
+    val currentWorkspaceDir: StateFlow<File?> = _currentWorkspaceDir.asStateFlow()
 
     private val _fileTree = MutableStateFlow<List<FileNode>>(emptyList())
     val fileTree: StateFlow<List<FileNode>> = _fileTree.asStateFlow()
 
-    private fun getDefaultWorkspaceDirectory(): File {
-        val dir = File(context.filesDir, "workspaces/my-mobile-app")
+    fun getWorkspacesDirectory(): File {
+        val dir = File(context.filesDir, "workspaces")
         if (!dir.exists()) {
             dir.mkdirs()
         }
         return dir
     }
 
-    suspend fun setWorkspaceDirectory(dir: File) = withContext(Dispatchers.IO) {
+    fun listAvailableProjects(): List<File> {
+        val root = getWorkspacesDirectory()
+        return root.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name.lowercase() } ?: emptyList()
+    }
+
+    suspend fun openWorkspace(dir: File): Boolean = withContext(Dispatchers.IO) {
         if (dir.exists() && dir.isDirectory) {
             _currentWorkspaceDir.value = dir
-            refreshTree()
+            refreshTreeSync()
+            true
+        } else {
+            false
         }
     }
 
-    fun initializeDefaultWorkspaceIfNeeded() {
-        val workspaceDir = _currentWorkspaceDir.value
-        val files = workspaceDir.listFiles()
-        if (files == null || files.isEmpty()) {
-            copyAssetFolder("sample_project", workspaceDir)
+    suspend fun createNewProject(name: String): File? = withContext(Dispatchers.IO) {
+        val cleanName = name.trim().replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        if (cleanName.isEmpty()) return@withContext null
+
+        val newDir = File(getWorkspacesDirectory(), cleanName)
+        if (!newDir.exists()) {
+            newDir.mkdirs()
         }
+        _currentWorkspaceDir.value = newDir
         refreshTreeSync()
+        newDir
     }
 
-    private fun copyAssetFolder(assetPath: String, destDir: File) {
-        try {
-            val assetManager = context.assets
-            val assets = assetManager.list(assetPath) ?: return
-            if (!destDir.exists()) destDir.mkdirs()
-
-            for (asset in assets) {
-                val fullAssetPath = if (assetPath.isEmpty()) asset else "$assetPath/$asset"
-                val subAssets = assetManager.list(fullAssetPath)
-                if (subAssets != null && subAssets.isNotEmpty()) {
-                    copyAssetFolder(fullAssetPath, File(destDir, asset))
-                } else {
-                    val destFile = File(destDir, asset)
-                    assetManager.open(fullAssetPath).use { input ->
-                        FileOutputStream(destFile).use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+    suspend fun closeWorkspace() = withContext(Dispatchers.IO) {
+        _currentWorkspaceDir.value = null
+        _fileTree.value = emptyList()
     }
 
     fun refreshTreeSync() {
         val root = _currentWorkspaceDir.value
+        if (root == null || !root.exists()) {
+            _fileTree.value = emptyList()
+            return
+        }
         _fileTree.value = buildTree(root, 0)
     }
 
@@ -93,17 +88,23 @@ class WorkspaceManager(private val context: Context) {
     }
 
     suspend fun readFile(file: File): String = withContext(Dispatchers.IO) {
-        if (file.exists() && file.isFile) {
-            file.readText(Charsets.UTF_8)
-        } else {
+        try {
+            if (file.exists() && file.isFile) {
+                file.readText(Charsets.UTF_8)
+            } else {
+                ""
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
             ""
         }
     }
 
     suspend fun writeFile(file: File, content: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            if (!file.parentFile?.exists()!!) {
-                file.parentFile?.mkdirs()
+            val parent = file.parentFile
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs()
             }
             file.writeText(content, Charsets.UTF_8)
             refreshTreeSync()
@@ -167,4 +168,3 @@ class WorkspaceManager(private val context: Context) {
         }
     }
 }
-
