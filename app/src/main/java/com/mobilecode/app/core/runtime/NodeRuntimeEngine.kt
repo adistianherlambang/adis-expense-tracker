@@ -368,52 +368,119 @@ class NodeRuntimeEngine(
             }
 
             "i", "install", "add" -> {
-                val packages = args.drop(1).filter { !it.startsWith("-") }
+                val rawSpecs = args.drop(1).filter { !it.startsWith("-") }
+                val isSaveDev = args.contains("-D") || args.contains("--save-dev")
                 val pkgFile = File(workingDir, "package.json")
                 val pkgJson = withContext(Dispatchers.IO) {
                     if (pkgFile.exists()) {
                         try { JSONObject(pkgFile.readText()) } catch (e: Exception) { JSONObject() }
                     } else {
                         JSONObject().apply {
-                            put("name", workingDir.name.lowercase())
+                            put("name", workingDir.name.lowercase().replace(Regex("[^a-z0-9-_]"), "-"))
                             put("version", "1.0.0")
+                            put("description", "")
+                            put("main", "index.js")
                             put("dependencies", JSONObject())
                         }
                     }
                 }
-                val deps = pkgJson.optJSONObject("dependencies") ?: JSONObject().also { pkgJson.put("dependencies", it) }
-                val nodeModules = File(workingDir, "node_modules")
+                val depsKey = if (isSaveDev) "devDependencies" else "dependencies"
+                val deps = pkgJson.optJSONObject(depsKey) ?: JSONObject().also { pkgJson.put(depsKey, it) }
 
-                if (packages.isEmpty()) {
-                    withContext(Dispatchers.IO) { nodeModules.mkdirs() }
-                    val count = deps.length()
+                val specsToInstall = if (rawSpecs.isNotEmpty()) {
+                    rawSpecs
+                } else {
+                    // npm install with no arguments: install all dependencies listed in package.json
+                    val allSpecs = mutableListOf<String>()
+                    pkgJson.optJSONObject("dependencies")?.let { d ->
+                        d.keys().forEach { k -> allSpecs.add("$k@${d.optString(k, "latest")}") }
+                    }
+                    pkgJson.optJSONObject("devDependencies")?.let { d ->
+                        d.keys().forEach { k -> allSpecs.add("$k@${d.optString(k, "latest")}") }
+                    }
+                    allSpecs
+                }
+
+                if (specsToInstall.isEmpty()) {
+                    withContext(Dispatchers.IO) { File(workingDir, "node_modules").mkdirs() }
                     onWorkspaceChanged()
-                    onOutput("up to date, audited $count packages in 0.4s\nfound 0 vulnerabilities\n")
+                    onOutput("up to date, audited 0 packages in 0.2s\nfound 0 vulnerabilities\n")
                     return
                 }
 
+                val startTime = System.currentTimeMillis()
+                onOutput("npm http fetch Reaching https://registry.npmjs.org for ${specsToInstall.joinToString(", ")}...\n")
+
+                val result = RegistryInstaller.installNpmPackages(
+                    packageSpecs = specsToInstall,
+                    workingDir = workingDir,
+                    maxDepth = 3,
+                    onProgress = onOutput
+                )
+
                 withContext(Dispatchers.IO) {
-                    packages.forEach { pkgName ->
-                        val pkgDir = File(nodeModules, pkgName)
-                        pkgDir.mkdirs()
-                        val modIndex = File(pkgDir, "index.js")
-                        if (!modIndex.exists()) {
-                            modIndex.writeText(
-                                "// Module: $pkgName\nmodule.exports = { name: '$pkgName', version: '1.0.0' };\n",
-                                Charsets.UTF_8
-                            )
-                        }
-                        val modPkg = File(pkgDir, "package.json")
-                        modPkg.writeText(
-                            JSONObject().put("name", pkgName).put("version", "1.0.0").put("main", "index.js").toString(2),
-                            Charsets.UTF_8
-                        )
-                        deps.put(pkgName, "^1.0.0")
+                    result.directVersions.forEach { (name, ver) ->
+                        deps.put(name, ver)
                     }
                     pkgFile.writeText(pkgJson.toString(2), Charsets.UTF_8)
+
+                    // Write real package-lock.json
+                    if (result.lockPackages.isNotEmpty()) {
+                        val lockFile = File(workingDir, "package-lock.json")
+                        val packagesObj = JSONObject()
+                        packagesObj.put("", JSONObject().apply {
+                            put("name", pkgJson.optString("name", workingDir.name))
+                            put("version", pkgJson.optString("version", "1.0.0"))
+                            put("dependencies", pkgJson.optJSONObject("dependencies") ?: JSONObject())
+                        })
+                        result.lockPackages.forEach { (k, v) -> packagesObj.put(k, v) }
+
+                        val lockJson = JSONObject().apply {
+                            put("name", pkgJson.optString("name", workingDir.name))
+                            put("version", pkgJson.optString("version", "1.0.0"))
+                            put("lockfileVersion", 3)
+                            put("requires", true)
+                            put("packages", packagesObj)
+                        }
+                        lockFile.writeText(lockJson.toString(2), Charsets.UTF_8)
+                    }
+                }
+
+                val elapsedSec = String.format("%.1f", (System.currentTimeMillis() - startTime) / 1000.0)
+                onWorkspaceChanged()
+                onOutput("\nadded ${result.installedCount} packages from registry.npmjs.org, and audited ${result.installedCount} packages in ${elapsedSec}s\nfound 0 vulnerabilities\n")
+            }
+
+            "uninstall", "remove", "rm", "un" -> {
+                val pkgs = args.drop(1).filter { !it.startsWith("-") }
+                if (pkgs.isEmpty()) {
+                    onOutput("npm ERR! Must provide a package name to uninstall\n")
+                    return
+                }
+                val pkgFile = File(workingDir, "package.json")
+                val nodeModules = File(workingDir, "node_modules")
+                var removedCount = 0
+                withContext(Dispatchers.IO) {
+                    val pkgJson = if (pkgFile.exists()) {
+                        try { JSONObject(pkgFile.readText()) } catch (e: Exception) { JSONObject() }
+                    } else JSONObject()
+                    val deps = pkgJson.optJSONObject("dependencies")
+                    val devDeps = pkgJson.optJSONObject("devDependencies")
+                    pkgs.forEach { p ->
+                        val dir = File(nodeModules, p)
+                        if (dir.exists()) {
+                            dir.deleteRecursively()
+                            removedCount++
+                        }
+                        deps?.remove(p)
+                        devDeps?.remove(p)
+                    }
+                    if (pkgFile.exists()) {
+                        pkgFile.writeText(pkgJson.toString(2), Charsets.UTF_8)
+                    }
                 }
                 onWorkspaceChanged()
-                onOutput("added ${packages.size} package(s) (${packages.joinToString(", ")}) in 0.6s\nfound 0 vulnerabilities\n")
+                onOutput("removed $removedCount package(s) in 0.3s\n")
             }
 
             "list", "ls" -> {
@@ -666,47 +733,228 @@ class NodeRuntimeEngine(
                 (this._events[ev] = this._events[ev] || []).push(fn);
                 return this;
             };
+            EventEmitter.prototype.once = function(ev, fn) {
+                var self = this;
+                function wrapper() {
+                    self.removeListener(ev, wrapper);
+                    fn.apply(this, arguments);
+                }
+                return this.on(ev, wrapper);
+            };
+            EventEmitter.prototype.removeListener = function(ev, fn) {
+                var list = this._events[ev] || [];
+                this._events[ev] = list.filter(function(f) { return f !== fn; });
+                return this;
+            };
             EventEmitter.prototype.emit = function(ev) {
                 var args = Array.prototype.slice.call(arguments, 1);
                 var list = this._events[ev] || [];
                 for (var i = 0; i < list.length; i++) list[i].apply(this, args);
                 return list.length > 0;
             };
+            EventEmitter.EventEmitter = EventEmitter;
 
-            window.require = function(id) {
-                var cleanId = String(id).replace(/^node:/, '');
-                if (cleanId === 'fs') return fsModule;
-                if (cleanId === 'path') return pathModule;
-                if (cleanId === 'os') return osModule;
-                if (cleanId === 'child_process') return childProcessModule;
-                if (cleanId === 'crypto') return cryptoModule;
-                if (cleanId === 'events') return { EventEmitter: EventEmitter };
-                if (cleanId === 'util') return { format: function() { return Array.prototype.slice.call(arguments).join(' '); }, promisify: function(fn) { return fn; } };
-                if (cleanId === 'assert') return function(cond, msg) { if (!cond) throw new Error(msg || 'AssertionError'); };
+            var utilModule = {
+                format: function() { return Array.prototype.slice.call(arguments).join(' '); },
+                promisify: function(fn) { return fn; },
+                inherits: function(ctor, superCtor) {
+                    if (ctor && superCtor) {
+                        ctor.super_ = superCtor;
+                        ctor.prototype = Object.create(superCtor.prototype, {
+                            constructor: { value: ctor, enumerable: false, writable: true, configurable: true }
+                        });
+                    }
+                },
+                deprecate: function(fn) { return fn; },
+                inspect: function(obj) { return formatVal(obj); }
+            };
 
-                // Local file or node_modules resolution
-                var candidates = [
-                    id,
-                    id + '.js',
-                    id + '.json',
-                    'node_modules/' + id + '/index.js',
-                    'node_modules/' + id + '.js'
-                ];
-                for (var i = 0; i < candidates.length; i++) {
-                    var candidate = candidates[i];
-                    if (__NativeNode.fsExists(candidate) && __NativeNode.fsIsFile(candidate)) {
-                        var content = fsModule.readFileSync(candidate);
-                        if (candidate.endsWith('.json')) {
-                            return JSON.parse(content);
-                        }
-                        var module = { exports: {} };
-                        var fn = new Function('exports', 'require', 'module', '__filename', '__dirname', content);
-                        fn(module.exports, window.require, module, candidate, pathModule.dirname(candidate));
-                        return module.exports;
+            var httpModule = {
+                METHODS: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'],
+                STATUS_CODES: { 200: 'OK', 201: 'Created', 204: 'No Content', 301: 'Moved Permanently', 302: 'Found', 304: 'Not Modified', 400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found', 500: 'Internal Server Error' },
+                IncomingMessage: function() { EventEmitter.call(this); this.headers = {}; },
+                ServerResponse: function() { EventEmitter.call(this); },
+                Server: function(handler) {
+                    EventEmitter.call(this);
+                    this._handler = handler;
+                    this.listen = function(port, host, cb) {
+                        var callback = typeof host === 'function' ? host : cb;
+                        if (callback) setTimeout(callback, 0);
+                        return this;
+                    };
+                },
+                createServer: function(handler) { return new httpModule.Server(handler); }
+            };
+            utilModule.inherits(httpModule.IncomingMessage, EventEmitter);
+            utilModule.inherits(httpModule.ServerResponse, EventEmitter);
+            utilModule.inherits(httpModule.Server, EventEmitter);
+
+            var urlModule = {
+                parse: function(u) {
+                    try {
+                        var parsed = new URL(u, 'http://localhost');
+                        return { protocol: parsed.protocol, host: parsed.host, hostname: parsed.hostname, port: parsed.port, pathname: parsed.pathname, search: parsed.search, query: parsed.search.replace(/^\?/, ''), href: u };
+                    } catch (e) {
+                        return { pathname: String(u), query: '', href: String(u) };
+                    }
+                },
+                format: function(obj) { return (obj && obj.href) ? obj.href : String(obj); },
+                URL: URL,
+                URLSearchParams: URLSearchParams
+            };
+
+            var querystringModule = {
+                parse: function(str) {
+                    var out = {};
+                    var params = new URLSearchParams(String(str || ''));
+                    params.forEach(function(v, k) { out[k] = v; });
+                    return out;
+                },
+                stringify: function(obj) {
+                    return new URLSearchParams(obj || {}).toString();
+                }
+            };
+
+            var streamModule = (function() {
+                function Stream() { EventEmitter.call(this); }
+                utilModule.inherits(Stream, EventEmitter);
+                Stream.prototype.pipe = function(dest) { return dest; };
+                Stream.Stream = Stream;
+                Stream.Readable = Stream;
+                Stream.Writable = Stream;
+                Stream.Duplex = Stream;
+                Stream.Transform = Stream;
+                Stream.PassThrough = Stream;
+                return Stream;
+            })();
+
+            var netModule = {
+                isIP: function(input) { return /^(\d+\.){3}\d+$/.test(input) ? 4 : 0; },
+                isIPv4: function(input) { return /^(\d+\.){3}\d+$/.test(input); },
+                isIPv6: function(input) { return String(input).indexOf(':') !== -1; },
+                Socket: streamModule,
+                Server: httpModule.Server,
+                createServer: httpModule.createServer
+            };
+
+            var __moduleCache = {};
+
+            function normalizePosix(p) {
+                var parts = String(p).split('/');
+                var out = [];
+                for (var i = 0; i < parts.length; i++) {
+                    var seg = parts[i];
+                    if (!seg || seg === '.') continue;
+                    if (seg === '..') {
+                        if (out.length > 0 && out[out.length - 1] !== '..') out.pop();
+                        else out.push('..');
+                    } else {
+                        out.push(seg);
                     }
                 }
-                throw new Error("Cannot find module '" + id + "'");
-            };
+                return (String(p).indexOf('/') === 0 ? '/' : '') + out.join('/');
+            }
+
+            function resolveModulePath(request, baseDir) {
+                var candidates = [];
+                if (request.indexOf('./') === 0 || request.indexOf('../') === 0 || request.indexOf('/') === 0) {
+                    var relBase = request.indexOf('/') === 0 ? request : normalizePosix((baseDir ? baseDir + '/' : '') + request);
+                    candidates.push(relBase);
+                    candidates.push(relBase + '.js');
+                    candidates.push(relBase + '.json');
+                    candidates.push(relBase + '/index.js');
+                    candidates.push(relBase + '/index.json');
+                } else {
+                    // Check node_modules/<pkg>
+                    var nmBase = 'node_modules/' + request;
+                    var pkgJsonPath = nmBase + '/package.json';
+                    if (__NativeNode.fsExists(pkgJsonPath) && __NativeNode.fsIsFile(pkgJsonPath)) {
+                        try {
+                            var pkgMeta = JSON.parse(fsModule.readFileSync(pkgJsonPath));
+                            var mainEntry = pkgMeta.main || 'index.js';
+                            var resolvedMain = normalizePosix(nmBase + '/' + mainEntry);
+                            candidates.push(resolvedMain);
+                            candidates.push(resolvedMain + '.js');
+                            candidates.push(resolvedMain + '/index.js');
+                        } catch (e) {}
+                    }
+                    candidates.push(nmBase + '/index.js');
+                    candidates.push(nmBase + '.js');
+                    candidates.push(nmBase + '.json');
+                    candidates.push(request);
+                    candidates.push(request + '.js');
+                    candidates.push(request + '.json');
+                }
+
+                for (var i = 0; i < candidates.length; i++) {
+                    var c = candidates[i];
+                    if (__NativeNode.fsExists(c) && __NativeNode.fsIsFile(c)) {
+                        return c;
+                    }
+                }
+                return null;
+            }
+
+            function createRequireFrom(baseDir) {
+                var req = function(id) {
+                    var cleanId = String(id).replace(/^node:/, '');
+                    if (cleanId === 'fs') return fsModule;
+                    if (cleanId === 'path') return pathModule;
+                    if (cleanId === 'os') return osModule;
+                    if (cleanId === 'child_process') return childProcessModule;
+                    if (cleanId === 'crypto') return cryptoModule;
+                    if (cleanId === 'events') return EventEmitter;
+                    if (cleanId === 'util') return utilModule;
+                    if (cleanId === 'http' || cleanId === 'https') return httpModule;
+                    if (cleanId === 'url') return urlModule;
+                    if (cleanId === 'querystring' || cleanId === 'qs') return querystringModule;
+                    if (cleanId === 'stream') return streamModule;
+                    if (cleanId === 'net') return netModule;
+                    if (cleanId === 'buffer') return { Buffer: window.Buffer, SlowBuffer: window.Buffer };
+                    if (cleanId === 'tty') return { isatty: function() { return true; } };
+                    if (cleanId === 'zlib') return {};
+                    if (cleanId === 'async_hooks') return { AsyncLocalStorage: function() {} };
+                    if (cleanId === 'assert') {
+                        var assertFn = function(cond, msg) { if (!cond) throw new Error(msg || 'AssertionError'); };
+                        assertFn.strictEqual = function(a, b, m) { if (a !== b) throw new Error(m || (a + ' !== ' + b)); };
+                        assertFn.equal = function(a, b, m) { if (a != b) throw new Error(m || (a + ' != ' + b)); };
+                        assertFn.ok = assertFn;
+                        return assertFn;
+                    }
+
+                    var resolved = resolveModulePath(cleanId, baseDir);
+                    if (!resolved) {
+                        throw new Error("Cannot find module '" + id + "'");
+                    }
+
+                    if (__moduleCache[resolved]) {
+                        return __moduleCache[resolved].exports;
+                    }
+
+                    var content = fsModule.readFileSync(resolved);
+                    if (resolved.endsWith('.json')) {
+                        var parsed = JSON.parse(content);
+                        __moduleCache[resolved] = { exports: parsed };
+                        return parsed;
+                    }
+
+                    var module = { exports: {}, id: resolved, filename: resolved, loaded: false };
+                    __moduleCache[resolved] = module;
+                    var moduleDir = pathModule.dirname(resolved);
+                    var childRequire = createRequireFrom(moduleDir);
+                    var fn = new Function('exports', 'require', 'module', '__filename', '__dirname', content);
+                    fn(module.exports, childRequire, module, resolved, moduleDir);
+                    module.loaded = true;
+                    return module.exports;
+                };
+                req.resolve = function(id) {
+                    return resolveModulePath(String(id), baseDir) || String(id);
+                };
+                req.cache = __moduleCache;
+                return req;
+            }
+
+            window.require = createRequireFrom('');
         })();
     """.trimIndent()
 }

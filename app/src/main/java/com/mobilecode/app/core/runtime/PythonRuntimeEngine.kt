@@ -165,44 +165,52 @@ class PythonRuntimeEngine(
             }
 
             "install" -> {
-                val pkgs = args.drop(1).filter { !it.startsWith("-") }
-                if (pkgs.isEmpty()) {
-                    onOutput("ERROR: You must give at least one requirement to install\n")
-                    return
-                }
-                if (args.contains("-r") && args.size >= 3) {
+                val pkgs = if (args.contains("-r") && args.size >= 3) {
                     val reqFileName = args[args.indexOf("-r") + 1]
                     val reqFile = File(workingDir, reqFileName)
                     if (!reqFile.exists()) {
                         onOutput("ERROR: Could not open requirements file: [Errno 2] No such file or directory: '$reqFileName'\n")
                         return
                     }
-                    val reqLines = withContext(Dispatchers.IO) {
+                    withContext(Dispatchers.IO) {
                         reqFile.readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
                     }
-                    reqLines.forEach { r ->
-                        val name = r.split("==", ">=", "<=")[0].trim()
-                        val ver = r.split("==").getOrNull(1)?.trim() ?: "1.0.0"
-                        installedPipPackages[name] = ver
-                        onOutput("Collecting $name\n  Downloading $name-$ver-py3-none-any.whl (42 kB)\n")
-                    }
-                    onOutput("Successfully installed ${reqLines.joinToString(" ")}\n")
+                } else {
+                    args.drop(1).filter { !it.startsWith("-") }
+                }
+
+                if (pkgs.isEmpty()) {
+                    onOutput("ERROR: You must give at least one requirement to install\n")
                     return
                 }
 
-                pkgs.forEach { pkg ->
-                    val name = pkg.split("==")[0].trim()
-                    val ver = pkg.split("==").getOrNull(1)?.trim() ?: "1.2.0"
-                    installedPipPackages[name] = ver
-                    onOutput("Collecting $name\n  Downloading $name-$ver-py3-none-any.whl (58 kB)\n")
+                val installedSummary = mutableListOf<String>()
+                for (pkg in pkgs) {
+                    val res = RegistryInstaller.installPipPackage(pkg, workingDir, onOutput)
+                    if (res != null) {
+                        installedPipPackages[res.name] = res.version
+                        installedSummary.add("${res.name}-${res.version}")
+                        onOutput("  Extracted ${res.extractedFiles} files into site-packages/\n")
+                    }
                 }
-                onOutput("Installing collected packages: ${pkgs.joinToString(", ")}\nSuccessfully installed ${pkgs.joinToString(" ") { "${it}-1.2.0" }}\n")
+
+                onWorkspaceChanged()
+                if (installedSummary.isNotEmpty()) {
+                    onOutput("Installing collected packages: ${installedSummary.joinToString(", ")}\nSuccessfully installed ${installedSummary.joinToString(" ")}\n")
+                }
             }
 
             "uninstall" -> {
                 val pkgs = args.drop(1).filter { !it.startsWith("-") }
+                val sitePackagesDir = File(workingDir, "site-packages")
+                withContext(Dispatchers.IO) {
+                    pkgs.forEach { pkg ->
+                        installedPipPackages.remove(pkg)
+                        File(sitePackagesDir, pkg.lowercase().replace('-', '_')).deleteRecursively()
+                    }
+                }
+                onWorkspaceChanged()
                 pkgs.forEach { pkg ->
-                    installedPipPackages.remove(pkg)
                     onOutput("Successfully uninstalled $pkg\n")
                 }
             }
