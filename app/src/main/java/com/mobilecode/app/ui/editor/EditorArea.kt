@@ -15,21 +15,35 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.NoteAdd
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,7 +62,10 @@ fun EditorArea(
 ) {
     val tabs by editorViewModel.tabs.collectAsState()
     val activeTabIndex by editorViewModel.activeTabIndex.collectAsState()
-    val activeTab = editorViewModel.activeTab
+    val activeTab = tabs.getOrNull(activeTabIndex)
+
+    var showNewFileDialog by remember { mutableStateOf(false) }
+    var newFileName by remember { mutableStateOf("main.js") }
 
     Column(
         modifier = modifier
@@ -61,16 +78,40 @@ fun EditorArea(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(35.dp)
-                    .background(VsCodeTheme.SidebarBackground)
-                    .horizontalScroll(rememberScrollState()),
+                    .background(VsCodeTheme.SidebarBackground),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                tabs.forEachIndexed { index, tab ->
-                    EditorTabItem(
-                        tab = tab,
-                        isActive = index == activeTabIndex,
-                        onSelect = { editorViewModel.selectTab(index) },
-                        onClose = { editorViewModel.closeTab(index) }
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    tabs.forEachIndexed { index, tab ->
+                        EditorTabItem(
+                            tab = tab,
+                            isActive = index == activeTabIndex,
+                            onSelect = { editorViewModel.selectTab(index) },
+                            onClose = { editorViewModel.closeTab(index) }
+                        )
+                    }
+                }
+
+                // Quick + button to add a new file tab anytime
+                IconButton(
+                    onClick = {
+                        newFileName = "script-${tabs.size + 1}.js"
+                        showNewFileDialog = true
+                    },
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp)
+                        .size(26.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "New File",
+                        tint = VsCodeTheme.Foreground,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
@@ -81,9 +122,8 @@ fun EditorArea(
             }
         }
 
-        // Empty state vs Monaco Editor Surface
-        if (tabs.isEmpty()) {
-            // VS Code Welcome Watermark Surface
+        // Empty state vs Native Code Editor Surface
+        if (tabs.isEmpty() || activeTab == null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -93,68 +133,143 @@ fun EditorArea(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(24.dp)
+                    modifier = Modifier.padding(20.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Code,
                         contentDescription = null,
-                        tint = VsCodeTheme.BadgeBackground.copy(alpha = 0.8f),
-                        modifier = Modifier.size(56.dp)
+                        tint = VsCodeTheme.BadgeBackground.copy(alpha = 0.85f),
+                        modifier = Modifier.size(48.dp)
                     )
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
                         text = "Visual Studio Code",
                         color = VsCodeTheme.Foreground,
-                        fontSize = 18.sp,
+                        fontSize = 17.sp,
                         fontWeight = FontWeight.SemiBold
                     )
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     Text(
-                        text = "Mobile Development Environment",
+                        text = "Start editing by creating a file or opening a project folder",
                         color = VsCodeTheme.SecondaryForeground,
-                        fontSize = 12.sp
+                        fontSize = 11.sp
                     )
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Interactive Quick-Start Buttons
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = {
+                                newFileName = "main.js"
+                                showNewFileDialog = true
+                            },
+                            shape = RoundedCornerShape(3.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = VsCodeTheme.BadgeBackground),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NoteAdd,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("New File", fontSize = 12.sp, color = Color.White)
+                        }
+
+                        Button(
+                            onClick = { onOpenFolderRequested?.invoke() },
+                            shape = RoundedCornerShape(3.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = VsCodeTheme.HoverBackground),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FolderOpen,
+                                contentDescription = null,
+                                tint = VsCodeTheme.Foreground,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Open Folder", fontSize = 12.sp, color = VsCodeTheme.Foreground)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     ShortcutHintRow("Show All Commands", "Ctrl + Shift + P")
                     ShortcutHintRow("Toggle Terminal", "Ctrl + `")
-                    ShortcutHintRow("Toggle Primary Side Bar", "Ctrl + B")
                     ShortcutHintRow("Save Active File", "Ctrl + S")
                 }
             }
         } else {
             MonacoWebView(
                 activeTab = activeTab,
+                editorCommands = editorViewModel.editorCommands,
                 onContentChanged = { fileId, content, isDirty ->
                     editorViewModel.onContentChanged(fileId, content, isDirty)
                 },
                 onCursorPosition = { line, col ->
                     editorViewModel.updateCursor(line, col)
                 },
+                onSaveFile = {
+                    editorViewModel.saveActiveFile()
+                },
                 onWebViewReady = onWebViewReady,
                 modifier = Modifier.weight(1f)
             )
         }
+    }
+
+    if (showNewFileDialog) {
+        AlertDialog(
+            onDismissRequest = { showNewFileDialog = false },
+            title = { Text("Create New File") },
+            text = {
+                OutlinedTextField(
+                    value = newFileName,
+                    onValueChange = { newFileName = it },
+                    label = { Text("File name (e.g. main.js, app.py, index.html)") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (newFileName.isNotBlank()) {
+                        editorViewModel.createQuickFile(newFileName.trim(), "")
+                        showNewFileDialog = false
+                    }
+                }) {
+                    Text("Create & Edit")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewFileDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
 @Composable
 private fun ShortcutHintRow(action: String, shortcut: String) {
     Row(
-        modifier = Modifier
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = action,
             color = VsCodeTheme.SecondaryForeground,
-            fontSize = 12.sp
+            fontSize = 11.sp
         )
         Box(
             modifier = Modifier
@@ -165,7 +280,7 @@ private fun ShortcutHintRow(action: String, shortcut: String) {
             Text(
                 text = shortcut,
                 color = VsCodeTheme.Foreground,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 fontFamily = VsCodeMonospaceFont
             )
         }
@@ -202,28 +317,28 @@ private fun EditorTabItem(
             text = tab.title,
             color = if (isActive) VsCodeTheme.Foreground else VsCodeTheme.SecondaryForeground,
             fontSize = 12.sp,
-            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal
+            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1
         )
 
-        // Dirty Indicator dot or Close button
         if (tab.isDirty) {
             Box(
                 modifier = Modifier
-                    .size(8.dp)
-                    .background(VsCodeTheme.Foreground, CircleShape)
+                    .size(7.dp)
+                    .background(VsCodeTheme.WarningColor, CircleShape)
             )
-        } else {
-            IconButton(
-                onClick = onClose,
-                modifier = Modifier.size(16.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Close Tab",
-                    tint = VsCodeTheme.SecondaryForeground,
-                    modifier = Modifier.size(12.dp)
-                )
-            }
+        }
+
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier.size(16.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Close Tab",
+                tint = VsCodeTheme.SecondaryForeground,
+                modifier = Modifier.size(12.dp)
+            )
         }
     }
 }

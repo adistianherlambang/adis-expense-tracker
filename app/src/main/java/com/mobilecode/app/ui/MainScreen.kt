@@ -63,10 +63,12 @@ fun MainScreen(
     var accessoryTarget by remember { mutableStateOf("EDIT") }
 
     val currentWorkspaceDir by workspaceManager.currentWorkspaceDir.collectAsState()
+    val tabs by editorViewModel.tabs.collectAsState()
+    val activeTabIndex by editorViewModel.activeTabIndex.collectAsState()
     val cursor by editorViewModel.cursor.collectAsState()
     val diagnostics by editorViewModel.diagnostics.collectAsState()
     val currentBranch by gitViewModel.currentBranch.collectAsState()
-    val activeTab = editorViewModel.activeTab
+    val activeTab = tabs.getOrNull(activeTabIndex)
 
     val commandList = remember {
         listOf(
@@ -148,6 +150,10 @@ fun MainScreen(
                     EditorArea(
                         editorViewModel = editorViewModel,
                         onWebViewReady = { editorWebView = it },
+                        onOpenFolderRequested = {
+                            currentActivityView = ActivityView.EXPLORER
+                            isSidebarVisible = true
+                        },
                         modifier = Modifier.weight(1f)
                     )
 
@@ -158,6 +164,7 @@ fun MainScreen(
                             editorViewModel = editorViewModel,
                             onNavigateToFile = { file, line ->
                                 editorViewModel.openFile(file)
+                                editorViewModel.goToLine(line)
                             },
                             onClosePanel = { isBottomPanelVisible = false }
                         )
@@ -173,7 +180,7 @@ fun MainScreen(
                 },
                 onKeyInserted = { key ->
                     if (accessoryTarget == "EDIT") {
-                        editorWebView?.let { insertTextIntoEditor(it, key) }
+                        editorViewModel.insertText(key)
                     } else {
                         terminalViewModel.sendInput(key)
                     }
@@ -181,8 +188,9 @@ fun MainScreen(
                 onSpecialKey = { special ->
                     if (accessoryTarget == "EDIT") {
                         when (special) {
-                            "TAB" -> editorWebView?.let { insertTextIntoEditor(it, "  ") }
-                            "DEL" -> editorWebView?.let { deleteCharFromEditor(it) }
+                            "TAB" -> editorViewModel.insertText("  ")
+                            "DEL" -> editorViewModel.deleteChar()
+                            "ESC" -> {}
                             else -> {}
                         }
                     } else {

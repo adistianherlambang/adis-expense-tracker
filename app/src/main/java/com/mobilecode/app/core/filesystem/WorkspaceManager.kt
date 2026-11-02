@@ -118,12 +118,12 @@ class WorkspaceManager(private val context: Context) {
     suspend fun createFile(parentDir: File, name: String): File? = withContext(Dispatchers.IO) {
         try {
             val newFile = File(parentDir, name)
-            if (newFile.createNewFile()) {
-                refreshTreeSync()
-                newFile
-            } else {
-                null
+            newFile.parentFile?.let { if (!it.exists()) it.mkdirs() }
+            if (!newFile.exists()) {
+                newFile.createNewFile()
             }
+            refreshTreeSync()
+            newFile
         } catch (e: Exception) {
             e.printStackTrace()
             null

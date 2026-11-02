@@ -3,11 +3,23 @@ package com.mobilecode.app.core.editor
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mobilecode.app.core.filesystem.WorkspaceManager
+import com.mobilecode.app.core.terminal.OutputLogger
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
+
+sealed class EditorCommand {
+    data class InsertText(val text: String) : EditorCommand()
+    object DeleteChar : EditorCommand()
+    object Undo : EditorCommand()
+    object Redo : EditorCommand()
+    data class GoToLine(val line: Int) : EditorCommand()
+}
 
 class EditorViewModel(
     private val workspaceManager: WorkspaceManager
@@ -28,6 +40,9 @@ class EditorViewModel(
     private val _problems = MutableStateFlow<List<DiagnosticItem>>(emptyList())
     val problems: StateFlow<List<DiagnosticItem>> = _problems.asStateFlow()
 
+    private val _editorCommands = MutableSharedFlow<EditorCommand>(extraBufferCapacity = 32)
+    val editorCommands: SharedFlow<EditorCommand> = _editorCommands.asSharedFlow()
+
     val activeTab: EditorTab?
         get() = _tabs.value.getOrNull(_activeTabIndex.value)
 
@@ -42,19 +57,7 @@ class EditorViewModel(
 
             val content = workspaceManager.readFile(file)
             val extension = file.extension.lowercase()
-            val language = when (extension) {
-                "js", "mjs", "cjs" -> "javascript"
-                "ts" -> "typescript"
-                "py" -> "python"
-                "json" -> "json"
-                "html" -> "html"
-                "css" -> "css"
-                "md" -> "markdown"
-                "kt", "kts" -> "kotlin"
-                "java" -> "java"
-                "sh", "bash" -> "shell"
-                else -> "plaintext"
-            }
+            val language = detectLanguage(extension)
 
             val newTab = EditorTab(
                 id = file.absolutePath,
@@ -68,7 +71,42 @@ class EditorViewModel(
             val updatedTabs = _tabs.value + newTab
             _tabs.value = updatedTabs
             _activeTabIndex.value = updatedTabs.size - 1
+            OutputLogger.logSystem("Opened file: ${file.name} (${content.length} chars)")
             runDiagnostics(newTab)
+        }
+    }
+
+    fun createQuickFile(fileName: String, initialContent: String = "") {
+        viewModelScope.launch {
+            var dir = workspaceManager.currentWorkspaceDir.value
+            if (dir == null) {
+                dir = workspaceManager.createNewProject("my-project")
+            }
+            if (dir != null) {
+                val cleanName = fileName.trim().ifEmpty { "main.js" }
+                val targetFile = File(dir, cleanName)
+                if (!targetFile.exists()) {
+                    workspaceManager.writeFile(targetFile, initialContent)
+                }
+                workspaceManager.refreshTree()
+                openFile(targetFile)
+            }
+        }
+    }
+
+    private fun detectLanguage(extension: String): String {
+        return when (extension) {
+            "js", "mjs", "cjs", "jsx" -> "javascript"
+            "ts", "tsx" -> "typescript"
+            "py" -> "python"
+            "json" -> "json"
+            "html", "htm", "xml" -> "html"
+            "css", "scss" -> "css"
+            "md", "markdown" -> "markdown"
+            "kt", "kts" -> "kotlin"
+            "java" -> "java"
+            "sh", "bash", "zsh" -> "shell"
+            else -> "plaintext"
         }
     }
 
@@ -90,7 +128,8 @@ class EditorViewModel(
     fun closeTab(index: Int) {
         val currentTabs = _tabs.value.toMutableList()
         if (index in currentTabs.indices) {
-            currentTabs.removeAt(index)
+            val closed = currentTabs.removeAt(index)
+            OutputLogger.logSystem("Closed tab: ${closed.title}")
             _tabs.value = currentTabs
             val currentActive = _activeTabIndex.value
             val newActive = when {
@@ -128,6 +167,26 @@ class EditorViewModel(
         _cursor.value = EditorCursor(line, column)
     }
 
+    fun insertText(text: String) {
+        _editorCommands.tryEmit(EditorCommand.InsertText(text))
+    }
+
+    fun deleteChar() {
+        _editorCommands.tryEmit(EditorCommand.DeleteChar)
+    }
+
+    fun undo() {
+        _editorCommands.tryEmit(EditorCommand.Undo)
+    }
+
+    fun redo() {
+        _editorCommands.tryEmit(EditorCommand.Redo)
+    }
+
+    fun goToLine(line: Int) {
+        _editorCommands.tryEmit(EditorCommand.GoToLine(line))
+    }
+
     fun saveActiveFile() {
         val tab = activeTab ?: return
         viewModelScope.launch {
@@ -137,6 +196,7 @@ class EditorViewModel(
                     if (it.id == tab.id) it.copy(isDirty = false) else it
                 }
                 _tabs.value = updatedTabs
+                OutputLogger.logSystem("Saved file: ${tab.file.absolutePath}")
             }
         }
     }
@@ -150,9 +210,9 @@ class EditorViewModel(
                         if (it.id == tab.id) it.copy(isDirty = false) else it
                     }
                     _tabs.value = updated
+                    OutputLogger.logSystem("Saved file: ${tab.file.name}")
                 }
             }
         }
     }
 }
-

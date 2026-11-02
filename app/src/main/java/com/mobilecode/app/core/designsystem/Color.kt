@@ -29,5 +29,14 @@ object VsCodeTheme {
     val GitAdded = Color(0xFF73C991)
     val GitDeleted = Color(0xFFC74E39)
     val GitUntracked = Color(0xFF73C991)
+    val InputBackground = Color(0xFF3C3C3C)
+    val InputBorder = Color(0xFF474747)
+    val EditorLineNumbers = Color(0xFF858585)
+    val SyntaxKeyword = Color(0xFF569CD6)
+    val SyntaxFunction = Color(0xFFDCDCAA)
+    val SyntaxNumber = Color(0xFFB5CEA8)
+    val SyntaxString = Color(0xFFCE9178)
+    val SyntaxComment = Color(0xFF6A9955)
+    val SyntaxType = Color(0xFF4EC9B0)
 }
 
