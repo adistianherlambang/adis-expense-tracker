@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Integrated Terminal</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1e1e1e;
+            color: #cccccc;
+            font-family: Consolas, Menlo, Monaco, "Courier New", monospace;
+            font-size: 13px;
+            line-height: 18px;
+        }
+        #terminal-container {
+            width: 100%;
+            height: 100%;
+            padding: 6px 10px;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            white-space: pre-wrap;
+            word-break: break-all;
+            user-select: text;
+            -webkit-user-select: text;
+        }
+        .term-cursor {
+            display: inline-block;
+            width: 8px;
+            height: 15px;
+            background-color: #569cd6;
+            vertical-align: middle;
+            animation: blink 1s step-end infinite;
+        }
+        @keyframes blink {
+            from, to { opacity: 1; }
+            50% { opacity: 0; }
+        }
+        /* Hidden input to capture soft keyboard and physical keyboard events */
+        #hidden-input {
+            position: absolute;
+            left: -9999px;
+            top: -9999px;
+            opacity: 0;
+            width: 1px;
+            height: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div id="terminal-container" onclick="focusTerminal()">
+        <span id="terminal-output"></span><span class="term-cursor"></span>
+    </div>
+    <input type="text" id="hidden-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+
+    <script>
+        (function() {
+            let activeSessionId = "term-1";
+            const outputEl = document.getElementById('terminal-output');
+            const containerEl = document.getElementById('terminal-container');
+            const inputEl = document.getElementById('hidden-input');
+
+            // ANSI 16-color palette
+            const ansiColors = {
+                '30': '#000000', '31': '#cd3131', '32': '#0dbc79', '33': '#e5e510',
+                '34': '#2472c8', '35': '#bc3fbc', '36': '#11a8cd', '37': '#e5e5e5',
+                '90': '#666666', '91': '#f14c4c', '92': '#23d18b', '93': '#f5f543',
+                '94': '#3b8eea', '95': '#d670d6', '96': '#29b8db', '97': '#ffffff'
+            };
+
+            function parseAnsi(text) {
+                // Basic ANSI parser for color escapes \x1b[...m
+                let html = "";
+                let inTag = false;
+                let currentSpan = "";
+                const regex = /\x1b\[([0-9;]*)m/g;
+                let lastIndex = 0;
+                let match;
+
+                while ((match = regex.exec(text)) !== null) {
+                    const plain = text.substring(lastIndex, match.index);
+                    html += escapeHtml(plain);
+                    lastIndex = regex.lastIndex;
+
+                    const code = match[1];
+                    if (code === '0' || code === '') {
+                        if (inTag) { html += '</span>'; inTag = false; }
+                    } else if (ansiColors[code]) {
+                        if (inTag) { html += '</span>'; }
+                        html += `<span style="color: ${ansiColors[code]}">`;
+                        inTag = true;
+                    } else if (code === '1') {
+                        html += '<span style="font-weight: bold;">';
+                        inTag = true;
+                    }
+                }
+                html += escapeHtml(text.substring(lastIndex));
+                if (inTag) html += '</span>';
+                return html;
+            }
+
+            function escapeHtml(str) {
+                return str
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+            }
+
+            window.focusTerminal = function() {
+                if (inputEl) inputEl.focus();
+            };
+
+            inputEl.addEventListener('keydown', function(e) {
+                let data = null;
+                if (e.key === 'Enter') data = '\r';
+                else if (e.key === 'Backspace') data = '\x7f';
+                else if (e.key === 'Tab') { e.preventDefault(); data = '\t'; }
+                else if (e.key === 'ArrowUp') data = '\x1b[A';
+                else if (e.key === 'ArrowDown') data = '\x1b[B';
+                else if (e.key === 'ArrowRight') data = '\x1b[C';
+                else if (e.key === 'ArrowLeft') data = '\x1b[D';
+                else if (e.ctrlKey && e.key.toLowerCase() === 'c') data = '\x03';
+                else if (e.ctrlKey && e.key.toLowerCase() === 'd') data = '\x04';
+                else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+                    outputEl.innerHTML = "";
+                    data = '\x0c';
+                }
+
+                if (data && window.AndroidTerminalBridge) {
+                    window.AndroidTerminalBridge.onTerminalInput(activeSessionId, data);
+                    e.preventDefault();
+                    inputEl.value = '';
+                }
+            });
+
+            inputEl.addEventListener('input', function(e) {
+                const val = inputEl.value;
+                if (val && window.AndroidTerminalBridge) {
+                    window.AndroidTerminalBridge.onTerminalInput(activeSessionId, val);
+                    inputEl.value = '';
+                }
+            });
+
+            // Public bridge methods invoked by Kotlin
+            window.terminalBridge = {
+                setSession: function(sessionId) {
+                    activeSessionId = sessionId;
+                },
+
+                write: function(sessionId, text) {
+                    if (sessionId !== activeSessionId) return;
+                    outputEl.innerHTML += parseAnsi(text);
+                    containerEl.scrollTop = containerEl.scrollHeight;
+                },
+
+                clear: function(sessionId) {
+                    outputEl.innerHTML = "";
+                },
+
+                sendRaw: function(text) {
+                    if (window.AndroidTerminalBridge) {
+                        window.AndroidTerminalBridge.onTerminalInput(activeSessionId, text);
+                    }
+                }
+            };
+
+            document.addEventListener('DOMContentLoaded', function() {
+                focusTerminal();
+                if (window.AndroidTerminalBridge) {
+                    window.AndroidTerminalBridge.onTerminalReady();
+                }
+            });
+        })();
+    </script>
+</body>
+</html>
+

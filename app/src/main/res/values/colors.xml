@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- VS Code Dark+ Official Hex Colors -->
+    <color name="vscode_editor_bg">#1E1E1E</color>
+    <color name="vscode_sidebar_bg">#252526</color>
+    <color name="vscode_activity_bar_bg">#333333</color>
+    <color name="vscode_panel_bg">#1E1E1E</color>
+    <color name="vscode_title_bar_bg">#3C3C3C</color>
+    <color name="vscode_status_bar_bg">#007ACC</color>
+    <color name="vscode_border">#3C3C3C</color>
+    <color name="vscode_foreground">#CCCCCC</color>
+    <color name="vscode_secondary_foreground">#858585</color>
+    <color name="vscode_selection_bg">#264F78</color>
+    <color name="vscode_focus_border">#007FD4</color>
+    <color name="vscode_hover_bg">#2A2D2E</color>
+</resources>
+

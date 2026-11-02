@@ -1,0 +1,13 @@
+{
+  "name": "my-mobile-app",
+  "version": "1.0.0",
+  "description": "Mobile Code Node.js starter application",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
+

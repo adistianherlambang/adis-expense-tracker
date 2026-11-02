@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- VS Code styled angular ribbon icon in brand blue #007ACC -->
+    <path
+        android:fillColor="#007ACC"
+        android:pathData="M75,22 L35,54 L22,43 L17,47 L30,59 L17,71 L22,75 L35,64 L75,96 L91,89 L91,29 Z" />
+    <path
+        android:fillColor="#1F8AD2"
+        android:pathData="M75,22 L91,29 L91,48 L56,54 Z" />
+    <path
+        android:fillColor="#0065A9"
+        android:pathData="M75,96 L91,89 L91,70 L56,64 Z" />
+</vector>
+
