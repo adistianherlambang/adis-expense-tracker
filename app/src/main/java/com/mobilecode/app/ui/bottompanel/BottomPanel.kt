@@ -76,6 +76,7 @@ fun BottomPanel(
     terminalViewModel: TerminalViewModel,
     editorViewModel: EditorViewModel,
     onNavigateToFile: (File, Int) -> Unit = { _, _ -> },
+    onTerminalFocused: (() -> Unit)? = null,
     onClosePanel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -278,9 +279,8 @@ fun BottomPanel(
                     if (activeSession != null) {
                         TerminalWebView(
                             session = activeSession,
-                            onCommandSubmitted = { cmd ->
-                                terminalViewModel.sendCommand(cmd)
-                            }
+                            terminalViewModel = terminalViewModel,
+                            onTerminalFocused = onTerminalFocused
                         )
                     }
                 }

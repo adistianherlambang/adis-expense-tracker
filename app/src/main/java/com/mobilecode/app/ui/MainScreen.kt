@@ -166,6 +166,9 @@ fun MainScreen(
                                 editorViewModel.openFile(file)
                                 editorViewModel.goToLine(line)
                             },
+                            onTerminalFocused = {
+                                accessoryTarget = "TERM"
+                            },
                             onClosePanel = { isBottomPanelVisible = false }
                         )
                     }
@@ -197,6 +200,7 @@ fun MainScreen(
                         when (special) {
                             "ESC" -> terminalViewModel.sendInput("\u001b")
                             "TAB" -> terminalViewModel.sendInput("\t")
+                            "DEL" -> terminalViewModel.backspaceCommandInput()
                             "CTRL" -> terminalViewModel.sendInput("\u0003")
                             "UP" -> terminalViewModel.sendInput("\u001b[A")
                             "DOWN" -> terminalViewModel.sendInput("\u001b[B")

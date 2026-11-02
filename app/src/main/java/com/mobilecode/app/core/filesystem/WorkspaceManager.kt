@@ -10,6 +10,8 @@ import java.io.File
 
 class WorkspaceManager(private val context: Context) {
 
+    val appContext: Context = context.applicationContext
+
     private val _currentWorkspaceDir = MutableStateFlow<File?>(null)
     val currentWorkspaceDir: StateFlow<File?> = _currentWorkspaceDir.asStateFlow()
 

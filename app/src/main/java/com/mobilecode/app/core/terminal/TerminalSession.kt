@@ -8,19 +8,39 @@ import java.io.File
 class TerminalSession(
     val id: String,
     val title: String,
-    val workingDir: File,
+    initialWorkingDir: File,
     val isAlive: Boolean = true
 ) {
     private val buffer = StringBuilder()
+
     private val _outputState = MutableStateFlow("")
     val outputState: StateFlow<String> = _outputState.asStateFlow()
+
+    private val _workingDirState = MutableStateFlow(initialWorkingDir)
+    val workingDirState: StateFlow<File> = _workingDirState.asStateFlow()
+
+    var workingDir: File
+        get() = _workingDirState.value
+        set(value) {
+            _workingDirState.value = value
+        }
+
+    // "SH", "NODE", or "PYTHON"
+    private val _replModeState = MutableStateFlow("SH")
+    val replModeState: StateFlow<String> = _replModeState.asStateFlow()
+
+    var replMode: String
+        get() = _replModeState.value
+        set(value) {
+            _replModeState.value = value
+        }
 
     @Synchronized
     fun append(text: String) {
         val cleanText = stripAnsiCodes(text)
         buffer.append(cleanText)
-        if (buffer.length > 50000) {
-            buffer.delete(0, 10000)
+        if (buffer.length > 60000) {
+            buffer.delete(0, 12000)
         }
         _outputState.value = buffer.toString()
     }
