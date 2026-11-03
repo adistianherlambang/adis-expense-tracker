@@ -1,5 +1,6 @@
 package com.mobilecode.app.core.terminal
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +25,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
@@ -44,6 +47,16 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -75,6 +88,8 @@ fun TerminalWebView(
     val replMode by session.replModeState.collectAsState()
     val commandInput by terminalViewModel.commandInput.collectAsState()
 
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val topInputFocusRequester = remember { FocusRequester() }
     val canvasFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -100,6 +115,43 @@ fun TerminalWebView(
         )
     }
 
+    fun copyFromTerminal() {
+        val selMin = textFieldValue.selection.min.coerceIn(0, textFieldValue.text.length)
+        val selMax = textFieldValue.selection.max.coerceIn(0, textFieldValue.text.length)
+        val textToCopy = if (selMin != selMax) {
+            textFieldValue.text.substring(selMin, selMax)
+        } else if (commandInput.isNotEmpty()) {
+            commandInput
+        } else {
+            outputText
+        }
+        if (textToCopy.isNotEmpty()) {
+            clipboardManager.setText(AnnotatedString(textToCopy))
+            Toast.makeText(
+                context,
+                if (selMin != selMax) "Copied selection to clipboard" else "Copied terminal output to clipboard",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    fun pasteIntoTerminal() {
+        val clip = clipboardManager.getText()?.text ?: return
+        if (clip.isEmpty()) return
+        val singleLine = clip.replace("\r\n", "\n").trimEnd('\n')
+        if (!singleLine.contains("\n")) {
+            terminalViewModel.appendToCommandInput(singleLine)
+        } else {
+            // Multi-line paste: execute lines sequentially, leaving any trailing partial line or executing all
+            val lines = singleLine.split("\n")
+            lines.forEach { line ->
+                if (line.isNotBlank()) {
+                    terminalViewModel.sendCommand(line)
+                }
+            }
+        }
+    }
+
     // Keep textFieldValue synchronized when outputText, promptPrefix, or ViewModel commandInput updates
     LaunchedEffect(prefixText, commandInput) {
         val expected = prefixText + commandInput
@@ -121,12 +173,36 @@ fun TerminalWebView(
         }
     }
 
+    val clipboardKeyHandler = Modifier.onPreviewKeyEvent { keyEvent ->
+        if (keyEvent.type == KeyEventType.KeyDown && (keyEvent.isCtrlPressed || keyEvent.isMetaPressed)) {
+            when (keyEvent.key) {
+                Key.C -> {
+                    val hasSelection = textFieldValue.selection.min != textFieldValue.selection.max
+                    if (keyEvent.isShiftPressed || keyEvent.isMetaPressed || hasSelection) {
+                        copyFromTerminal()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                Key.V -> {
+                    pasteIntoTerminal()
+                    true
+                }
+                else -> false
+            }
+        } else {
+            false
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(VsCodeTheme.PanelBackground)
+            .then(clipboardKeyHandler)
     ) {
-        // 1. Dedicated Top Command Input Bar (Always visible at top of Terminal, never covered by navbar/keyboard)
+        // 1. Dedicated Top Command Input Bar (Always visible at top of Terminal, with Copy & Paste support)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -203,7 +279,7 @@ fun TerminalWebView(
                         ) {
                             if (commandInput.isEmpty()) {
                                 Text(
-                                    text = "Ketik perintah disini (node -v, python -V, ls, npm init)...",
+                                    text = "Ketik perintah (node -v, python -V, npm install)...",
                                     color = VsCodeTheme.SecondaryForeground,
                                     fontSize = 12.sp,
                                     fontFamily = VsCodeMonospaceFont,
@@ -216,9 +292,35 @@ fun TerminalWebView(
                 )
             }
 
+            // Clipboard Copy Button
+            IconButton(
+                onClick = { copyFromTerminal() },
+                modifier = Modifier.size(26.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ContentCopy,
+                    contentDescription = "Copy Terminal Output / Selection",
+                    tint = VsCodeTheme.Foreground,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+
+            // Clipboard Paste Button
+            IconButton(
+                onClick = { pasteIntoTerminal() },
+                modifier = Modifier.size(26.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ContentPaste,
+                    contentDescription = "Paste Clipboard into Terminal",
+                    tint = VsCodeTheme.Foreground,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+
             IconButton(
                 onClick = { terminalViewModel.navigateHistoryUp() },
-                modifier = Modifier.size(26.dp)
+                modifier = Modifier.size(24.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowUp,
@@ -230,7 +332,7 @@ fun TerminalWebView(
 
             IconButton(
                 onClick = { terminalViewModel.navigateHistoryDown() },
-                modifier = Modifier.size(26.dp)
+                modifier = Modifier.size(24.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowDown,
@@ -265,7 +367,7 @@ fun TerminalWebView(
             }
         }
 
-        // 2. Quick Command Chips Strip
+        // 2. Quick Command & Clipboard Strip
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -277,6 +379,36 @@ fun TerminalWebView(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF2B3A4A), RoundedCornerShape(3.dp))
+                    .border(0.5.dp, VsCodeTheme.FocusBorder, RoundedCornerShape(3.dp))
+                    .clickable { copyFromTerminal() }
+                    .padding(horizontal = 7.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = "Copy",
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontFamily = VsCodeMonospaceFont
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF2B3A4A), RoundedCornerShape(3.dp))
+                    .border(0.5.dp, VsCodeTheme.FocusBorder, RoundedCornerShape(3.dp))
+                    .clickable { pasteIntoTerminal() }
+                    .padding(horizontal = 7.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = "Paste",
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontFamily = VsCodeMonospaceFont
+                )
+            }
+
             val quickCommands = listOf(
                 "node -v",
                 "python --version",
@@ -284,6 +416,7 @@ fun TerminalWebView(
                 "pip list",
                 "ls -la",
                 "pwd",
+                "sandbox",
                 "git status",
                 "help",
                 "clear"
@@ -308,7 +441,7 @@ fun TerminalWebView(
             }
         }
 
-        // 3. Main Editable Terminal Surface (Exact same architecture as MonacoWebView!)
+        // 3. Main Editable & Selectable Terminal Surface
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -330,9 +463,14 @@ fun TerminalWebView(
                     onTerminalFocused?.invoke()
 
                     if (newValue.text == textFieldValue.text) {
-                        val clampedStart = newValue.selection.start.coerceAtLeast(prefixText.length)
-                        val clampedEnd = newValue.selection.end.coerceAtLeast(prefixText.length)
-                        textFieldValue = newValue.copy(selection = TextRange(clampedStart, clampedEnd))
+                        // Allow arbitrary text selection anywhere in terminal output so user can Copy!
+                        // Only clamp to the prompt if selection is a collapsed single cursor.
+                        if (!newValue.selection.collapsed) {
+                            textFieldValue = newValue
+                        } else {
+                            val clamped = newValue.selection.start.coerceAtLeast(prefixText.length)
+                            textFieldValue = newValue.copy(selection = TextRange(clamped))
+                        }
                         return@BasicTextField
                     }
 
