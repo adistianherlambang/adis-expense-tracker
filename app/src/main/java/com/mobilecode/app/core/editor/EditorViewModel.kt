@@ -19,6 +19,8 @@ sealed class EditorCommand {
     object Undo : EditorCommand()
     object Redo : EditorCommand()
     data class GoToLine(val line: Int) : EditorCommand()
+    object ToggleComment : EditorCommand()
+    object FormatDocument : EditorCommand()
 }
 
 class EditorViewModel(
@@ -94,19 +96,30 @@ class EditorViewModel(
         }
     }
 
-    private fun detectLanguage(extension: String): String {
-        return when (extension) {
-            "js", "mjs", "cjs", "jsx" -> "javascript"
-            "ts", "tsx" -> "typescript"
-            "py" -> "python"
-            "json" -> "json"
-            "html", "htm", "xml" -> "html"
-            "css", "scss" -> "css"
-            "md", "markdown" -> "markdown"
-            "kt", "kts" -> "kotlin"
-            "java" -> "java"
-            "sh", "bash", "zsh" -> "shell"
-            else -> "plaintext"
+    companion object {
+        fun detectLanguage(extension: String): String {
+            return when (extension) {
+                "js", "mjs", "cjs", "jsx" -> "javascript"
+                "ts", "tsx", "mts", "cts" -> "typescript"
+                "html", "htm", "xhtml", "xml", "svg" -> "html"
+                "css", "scss", "sass", "less" -> "css"
+                "json", "jsonc" -> "json"
+                "py", "pyw", "ipynb" -> "python"
+                "java" -> "java"
+                "kt", "kts" -> "kotlin"
+                "c", "h" -> "c"
+                "cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++" -> "cpp"
+                "cs", "csx" -> "csharp"
+                "go" -> "go"
+                "rs" -> "rust"
+                "php", "phtml", "php5", "php7", "php8" -> "php"
+                "dart" -> "dart"
+                "swift" -> "swift"
+                "sql" -> "sql"
+                "md", "markdown" -> "markdown"
+                "sh", "bash", "zsh" -> "shell"
+                else -> "plaintext"
+            }
         }
     }
 
@@ -185,6 +198,14 @@ class EditorViewModel(
 
     fun goToLine(line: Int) {
         _editorCommands.tryEmit(EditorCommand.GoToLine(line))
+    }
+
+    fun toggleComment() {
+        _editorCommands.tryEmit(EditorCommand.ToggleComment)
+    }
+
+    fun formatDocument() {
+        _editorCommands.tryEmit(EditorCommand.FormatDocument)
     }
 
     fun saveActiveFile() {

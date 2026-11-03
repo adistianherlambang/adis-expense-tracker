@@ -23,11 +23,83 @@ object DiagnosticsEngine {
     fun analyze(file: File, content: String): List<DiagnosticItem> {
         val extension = file.extension.lowercase()
         return when (extension) {
-            "json" -> analyzeJson(file, content)
-            "js", "ts" -> analyzeJavaScript(file, content)
-            "py" -> analyzePython(file, content)
+            "json", "jsonc" -> analyzeJson(file, content)
+            "js", "ts", "mjs", "cjs", "jsx", "tsx", "mts", "cts",
+            "java", "kt", "kts", "c", "h", "cpp", "cc", "cxx", "hpp", "hxx",
+            "cs", "csx", "go", "rs", "php", "dart", "swift", "css", "scss" -> analyzeBraceLanguage(file, content)
+            "py", "pyw" -> analyzePython(file, content)
             else -> analyzeGeneric(file, content)
         }
+    }
+
+    private fun analyzeBraceLanguage(file: File, content: String): List<DiagnosticItem> {
+        val items = mutableListOf<DiagnosticItem>()
+        val lines = content.lines()
+        val source = "${file.extension.lowercase()}-linter"
+
+        val openBraces = mutableListOf<Pair<Int, Int>>() // line, col
+        val openParens = mutableListOf<Pair<Int, Int>>()
+        val openBrackets = mutableListOf<Pair<Int, Int>>()
+
+        lines.forEachIndexed { lineIdx, line ->
+            val lineNum = lineIdx + 1
+            var inString: Char? = null
+
+            for (colIdx in line.indices) {
+                val c = line[colIdx]
+                val colNum = colIdx + 1
+
+                if (inString != null) {
+                    if (c == inString && (colIdx == 0 || line[colIdx - 1] != '\\')) {
+                        inString = null
+                    }
+                } else {
+                    when (c) {
+                        '"', '\'', '`' -> inString = c
+                        '{' -> openBraces.add(Pair(lineNum, colNum))
+                        '}' -> {
+                            if (openBraces.isEmpty()) {
+                                items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing brace '}'", DiagnosticSeverity.ERROR, source))
+                            } else {
+                                openBraces.removeAt(openBraces.size - 1)
+                            }
+                        }
+                        '(' -> openParens.add(Pair(lineNum, colNum))
+                        ')' -> {
+                            if (openParens.isEmpty()) {
+                                items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing parenthesis ')'", DiagnosticSeverity.ERROR, source))
+                            } else {
+                                openParens.removeAt(openParens.size - 1)
+                            }
+                        }
+                        '[' -> openBrackets.add(Pair(lineNum, colNum))
+                        ']' -> {
+                            if (openBrackets.isEmpty()) {
+                                items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing bracket ']'", DiagnosticSeverity.ERROR, source))
+                            } else {
+                                openBrackets.removeAt(openBrackets.size - 1)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (inString != null && inString != '`') {
+                items.add(DiagnosticItem(file, lineNum, line.length, "Unclosed string literal", DiagnosticSeverity.ERROR, source))
+            }
+        }
+
+        openBraces.forEach { (l, c) ->
+            items.add(DiagnosticItem(file, l, c, "Unclosed brace '{'", DiagnosticSeverity.ERROR, source))
+        }
+        openParens.forEach { (l, c) ->
+            items.add(DiagnosticItem(file, l, c, "Unclosed parenthesis '('", DiagnosticSeverity.ERROR, source))
+        }
+        openBrackets.forEach { (l, c) ->
+            items.add(DiagnosticItem(file, l, c, "Unclosed bracket '['", DiagnosticSeverity.ERROR, source))
+        }
+
+        return items
     }
 
     private fun analyzeJson(file: File, content: String): List<DiagnosticItem> {
@@ -62,79 +134,6 @@ object DiagnosticsEngine {
         return items
     }
 
-    private fun analyzeJavaScript(file: File, content: String): List<DiagnosticItem> {
-        val items = mutableListOf<DiagnosticItem>()
-        val lines = content.lines()
-
-        val openBraces = mutableListOf<Pair<Int, Int>>() // line, col
-        val openParens = mutableListOf<Pair<Int, Int>>()
-        val openBrackets = mutableListOf<Pair<Int, Int>>()
-
-        lines.forEachIndexed { lineIdx, line ->
-            val lineNum = lineIdx + 1
-            var inString: Char? = null
-
-            for (colIdx in line.indices) {
-                val c = line[colIdx]
-                val colNum = colIdx + 1
-
-                if (inString != null) {
-                    if (c == inString && (colIdx == 0 || line[colIdx - 1] != '\\')) {
-                        inString = null
-                    }
-                } else {
-                    when (c) {
-                        '"', '\'', '`' -> inString = c
-                        '{' -> openBraces.add(Pair(lineNum, colNum))
-                        '}' -> {
-                            if (openBraces.isEmpty()) {
-                                items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing brace '}'", DiagnosticSeverity.ERROR, "js-linter"))
-                            } else {
-                                openBraces.removeAt(openBraces.size - 1)
-                            }
-                        }
-                        '(' -> openParens.add(Pair(lineNum, colNum))
-                        ')' -> {
-                            if (openParens.isEmpty()) {
-                                items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing parenthesis ')'", DiagnosticSeverity.ERROR, "js-linter"))
-                            } else {
-                                openParens.removeAt(openParens.size - 1)
-                            }
-                        }
-                        '[' -> openBrackets.add(Pair(lineNum, colNum))
-                        ']' -> {
-                            if (openBrackets.isEmpty()) {
-                                items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing bracket ']'", DiagnosticSeverity.ERROR, "js-linter"))
-                            } else {
-                                openBrackets.removeAt(openBrackets.size - 1)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (inString != null && inString != '`') {
-                items.add(DiagnosticItem(file, lineNum, line.length, "Unclosed string literal", DiagnosticSeverity.ERROR, "js-linter"))
-            }
-
-            // Warning for console.log or debugger statements
-            if (line.contains("debugger;")) {
-                items.add(DiagnosticItem(file, lineNum, 1, "Unwanted 'debugger' statement", DiagnosticSeverity.WARNING, "js-linter"))
-            }
-        }
-
-        openBraces.forEach { (l, c) ->
-            items.add(DiagnosticItem(file, l, c, "Unclosed brace '{'", DiagnosticSeverity.ERROR, "js-linter"))
-        }
-        openParens.forEach { (l, c) ->
-            items.add(DiagnosticItem(file, l, c, "Unclosed parenthesis '('", DiagnosticSeverity.ERROR, "js-linter"))
-        }
-        openBrackets.forEach { (l, c) ->
-            items.add(DiagnosticItem(file, l, c, "Unclosed bracket '['", DiagnosticSeverity.ERROR, "js-linter"))
-        }
-
-        return items
-    }
 
     private fun analyzePython(file: File, content: String): List<DiagnosticItem> {
         val items = mutableListOf<DiagnosticItem>()

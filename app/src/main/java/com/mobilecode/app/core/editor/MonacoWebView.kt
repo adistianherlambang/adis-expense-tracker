@@ -150,7 +150,7 @@ fun MonacoWebView(
                     undoStack.add(current)
                     redoStack.clear()
 
-                    val nextVal = handleProgrammaticInsert(textFieldValue, cmd.text)
+                    val nextVal = handleProgrammaticInsert(textFieldValue, cmd.text, activeTab.language)
                     textFieldValue = nextVal
                     onContentChanged(activeTab.id, nextVal.text, nextVal.text != savedBaseline)
                     updateCursorFromOffset(nextVal.text, nextVal.selection.start, onCursorPosition)
@@ -211,10 +211,34 @@ fun MonacoWebView(
                     textFieldValue = textFieldValue.copy(selection = TextRange(offset.coerceAtMost(textFieldValue.text.length)))
                     updateCursorFromOffset(textFieldValue.text, offset, onCursorPosition)
                 }
+
+                is EditorCommand.ToggleComment -> {
+                    val toggled = LanguageSupport.toggleComment(textFieldValue, activeTab.language)
+                    if (toggled.text != textFieldValue.text) {
+                        undoStack.add(textFieldValue.text)
+                        redoStack.clear()
+                        textFieldValue = toggled
+                        onContentChanged(activeTab.id, toggled.text, toggled.text != savedBaseline)
+                        updateCursorFromOffset(toggled.text, toggled.selection.start, onCursorPosition)
+                    }
+                }
+
+                is EditorCommand.FormatDocument -> {
+                    val formatted = LanguageSupport.formatCode(textFieldValue.text, activeTab.language)
+                    if (formatted != textFieldValue.text) {
+                        undoStack.add(textFieldValue.text)
+                        redoStack.clear()
+                        val newCursor = textFieldValue.selection.start.coerceAtMost(formatted.length)
+                        textFieldValue = TextFieldValue(formatted, TextRange(newCursor))
+                        onContentChanged(activeTab.id, formatted, formatted != savedBaseline)
+                        updateCursorFromOffset(formatted, newCursor, onCursorPosition)
+                    }
+                }
             }
         }
     }
 
+    val isHtml = activeTab.language == "html"
     val lines = remember(textFieldValue.text) {
         textFieldValue.text.split("\n")
     }
@@ -225,16 +249,26 @@ fun MonacoWebView(
         textFieldValue.text.substring(0, pos).count { it == '\n' } + 1
     }
 
-    val matchedBrackets = remember(textFieldValue.text, textFieldValue.selection) {
-        findMatchingBracketPair(textFieldValue.text, textFieldValue.selection.start)
+    val matchedBrackets = remember(textFieldValue.text, textFieldValue.selection, isHtml) {
+        findMatchingBracketPair(textFieldValue.text, textFieldValue.selection.start, isHtml)
     }
 
     val syntaxTransformation = remember(activeTab.language, matchedBrackets) {
         VisualTransformation { annotated ->
             TransformedText(
-                text = highlightCodeSyntax(annotated.text, activeTab.language, matchedBrackets),
+                text = LanguageSupport.highlight(annotated.text, activeTab.language, matchedBrackets),
                 offsetMapping = OffsetMapping.Identity
             )
+        }
+    }
+
+    var dismissAutocompleteOffset by remember(activeTab.id) { mutableStateOf(-1) }
+    val completions = remember(textFieldValue.text, textFieldValue.selection.start, activeTab.language, dismissAutocompleteOffset) {
+        val offset = textFieldValue.selection.start
+        if (offset == dismissAutocompleteOffset) {
+            emptyList()
+        } else {
+            LanguageSupport.getCompletions(textFieldValue.text, offset, activeTab.language)
         }
     }
 
@@ -289,7 +323,7 @@ fun MonacoWebView(
                 // Format Document (Auto-Indent) Button
                 IconButton(
                     onClick = {
-                        val formatted = formatDocumentIndentation(textFieldValue.text)
+                        val formatted = LanguageSupport.formatCode(textFieldValue.text, activeTab.language)
                         if (formatted != textFieldValue.text) {
                             undoStack.add(textFieldValue.text)
                             redoStack.clear()
@@ -305,6 +339,28 @@ fun MonacoWebView(
                         contentDescription = "Format Document Indentation",
                         tint = VsCodeTheme.Foreground,
                         modifier = Modifier.size(14.dp)
+                    )
+                }
+
+                // Toggle Comment Button
+                IconButton(
+                    onClick = {
+                        val toggled = LanguageSupport.toggleComment(textFieldValue, activeTab.language)
+                        if (toggled.text != textFieldValue.text) {
+                            undoStack.add(textFieldValue.text)
+                            redoStack.clear()
+                            textFieldValue = toggled
+                            onContentChanged(activeTab.id, toggled.text, toggled.text != savedBaseline)
+                        }
+                    },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Text(
+                        text = "//",
+                        color = VsCodeTheme.Foreground,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = VsCodeMonospaceFont
                     )
                 }
 
@@ -458,6 +514,87 @@ fun MonacoWebView(
             }
         }
 
+        // Contextual Autocomplete Suggestion Strip (IntelliSense)
+        if (completions.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(34.dp)
+                    .background(Color(0xFF252526))
+                    .border(width = 0.5.dp, color = VsCodeTheme.FocusBorder)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                completions.forEach { completion ->
+                    val badgeColor = when (completion.kind) {
+                        CompletionKind.KEYWORD -> Color(0xFF569CD6)
+                        CompletionKind.TYPE -> Color(0xFF4EC9B0)
+                        CompletionKind.FUNCTION -> Color(0xFFDCDCAA)
+                        CompletionKind.VARIABLE -> Color(0xFF9CDCFE)
+                        CompletionKind.SNIPPET -> Color(0xFFC586C0)
+                    }
+                    val badgeLabel = when (completion.kind) {
+                        CompletionKind.KEYWORD -> "kw"
+                        CompletionKind.TYPE -> "type"
+                        CompletionKind.FUNCTION -> "fn"
+                        CompletionKind.VARIABLE -> "var"
+                        CompletionKind.SNIPPET -> "snip"
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .background(Color(0xFF333333), RoundedCornerShape(3.dp))
+                            .border(0.5.dp, Color(0xFF474747), RoundedCornerShape(3.dp))
+                            .clickable {
+                                val currentText = textFieldValue.text
+                                val cursor = textFieldValue.selection.start
+                                val (_, wordStart) = LanguageSupport.findWordAtOffset(currentText, cursor)
+                                val before = currentText.substring(0, wordStart)
+                                val after = currentText.substring(cursor)
+                                val newText = before + completion.insertText + after
+                                val newCursor = (before + completion.insertText).length
+                                undoStack.add(currentText)
+                                redoStack.clear()
+                                textFieldValue = TextFieldValue(newText, TextRange(newCursor))
+                                onContentChanged(activeTab.id, newText, newText != savedBaseline)
+                                updateCursorFromOffset(newText, newCursor, onCursorPosition)
+                            }
+                            .padding(horizontal = 7.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = badgeLabel,
+                            color = badgeColor,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = VsCodeMonospaceFont
+                        )
+                        Text(
+                            text = completion.label,
+                            color = VsCodeTheme.Foreground,
+                            fontSize = 11.sp,
+                            fontFamily = VsCodeMonospaceFont
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = { dismissAutocompleteOffset = textFieldValue.selection.start },
+                    modifier = Modifier.size(18.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint = VsCodeTheme.SecondaryForeground,
+                        modifier = Modifier.size(10.dp)
+                    )
+                }
+            }
+        }
+
         // Main Code Editor Body: [Gutter] + [Code Surface] + [Minimap]
         Row(
             modifier = Modifier
@@ -508,7 +645,7 @@ fun MonacoWebView(
                 BasicTextField(
                     value = textFieldValue,
                     onValueChange = { rawNewValue ->
-                        val processedValue = applyEditorSmartEdits(textFieldValue, rawNewValue)
+                        val processedValue = applyEditorSmartEdits(textFieldValue, rawNewValue, activeTab.language)
                         val textChanged = processedValue.text != textFieldValue.text
                         if (textChanged) {
                             undoStack.add(textFieldValue.text)
@@ -604,8 +741,13 @@ fun MonacoWebView(
  * 3. Skip-over when typing a closing bracket/quote right before the same closing char
  * 4. Smart backspace removing both characters of an empty pair
  * 5. Auto-indentation on Enter (\n), including smart block expansion between {|}, (|), [|]
+ * 6. HTML auto-closing tag on typing '>' (e.g. <div> -> <div></div>)
  */
-internal fun applyEditorSmartEdits(oldValue: TextFieldValue, newValue: TextFieldValue): TextFieldValue {
+internal fun applyEditorSmartEdits(
+    oldValue: TextFieldValue,
+    newValue: TextFieldValue,
+    language: String = ""
+): TextFieldValue {
     val oldText = oldValue.text
     val newText = newValue.text
     if (oldText == newText) return newValue
@@ -672,7 +814,28 @@ internal fun applyEditorSmartEdits(oldValue: TextFieldValue, newValue: TextField
                 }
             }
 
-            // 2b. Skip-over closing bracket/quote if already present at cursor
+            // 2b. HTML tag auto-closing: typing '>' after '<tag' inserts '</tag>'
+            if (language == "html" && typedChar == '>') {
+                val before = oldText.substring(0, insertPos)
+                val lastOpenTag = Regex("<([a-zA-Z0-9\\-]+)(?:\\s+[^>]*)?$").find(before)
+                if (lastOpenTag != null) {
+                    val tagName = lastOpenTag.groupValues[1].lowercase()
+                    val voidElements = setOf(
+                        "area", "base", "br", "col", "embed", "hr", "img", "input",
+                        "link", "meta", "param", "source", "track", "wbr", "!doctype"
+                    )
+                    if (tagName !in voidElements && !before.endsWith("/")) {
+                        val closeTag = "</$tagName>"
+                        val autoClosed = oldText.substring(0, insertPos) + ">" + closeTag + oldText.substring(insertPos)
+                        return TextFieldValue(
+                            text = autoClosed,
+                            selection = TextRange(insertPos + 1)
+                        )
+                    }
+                }
+            }
+
+            // 2c. Skip-over closing bracket/quote if already present at cursor
             val nextCharInOld = oldText.getOrNull(insertPos)
             if (typedChar in CLOSING_CHARS && nextCharInOld == typedChar) {
                 // For quotes (" ' `), if typedChar == nextCharInOld, skip over the existing closing quote
@@ -682,7 +845,7 @@ internal fun applyEditorSmartEdits(oldValue: TextFieldValue, newValue: TextField
                 )
             }
 
-            // 2c. Auto-close opening bracket or quote: (), {}, [], "", '', ``
+            // 2d. Auto-close opening bracket or quote: (), {}, [], "", '', ``
             val matchingClose = AUTO_CLOSE_PAIRS[typedChar]
             if (matchingClose != null) {
                 val autoClosed = oldText.substring(0, insertPos) + typedChar + matchingClose + oldText.substring(insertPos)
@@ -714,7 +877,11 @@ internal fun applyEditorSmartEdits(oldValue: TextFieldValue, newValue: TextField
  * Handles insertions triggered from the Virtual Programming Accessory Bar so that
  * tapping (, {, [, ", ', or ` also auto-closes or wraps selection properly.
  */
-internal fun handleProgrammaticInsert(currentValue: TextFieldValue, inserted: String): TextFieldValue {
+internal fun handleProgrammaticInsert(
+    currentValue: TextFieldValue,
+    inserted: String,
+    language: String = ""
+): TextFieldValue {
     val text = currentValue.text
     val start = currentValue.selection.min.coerceIn(0, text.length)
     val end = currentValue.selection.max.coerceIn(0, text.length)
@@ -729,7 +896,7 @@ internal fun handleProgrammaticInsert(currentValue: TextFieldValue, inserted: St
         }
         val rawNext = text.substring(0, start) + inserted + text.substring(end)
         val candidate = TextFieldValue(rawNext, TextRange(start + 1))
-        return applyEditorSmartEdits(currentValue.copy(selection = TextRange(start)), candidate)
+        return applyEditorSmartEdits(currentValue.copy(selection = TextRange(start)), candidate, language)
     }
 
     val updated = text.substring(0, start) + inserted + text.substring(end)
@@ -737,21 +904,28 @@ internal fun handleProgrammaticInsert(currentValue: TextFieldValue, inserted: St
 }
 
 /**
- * Finds the indices of the matching bracket pair (), {}, [] adjacent to [cursorOffset].
+ * Finds the indices of the matching bracket pair (), {}, [], and <> adjacent to [cursorOffset].
  */
-internal fun findMatchingBracketPair(text: String, cursorOffset: Int): Pair<Int, Int>? {
+internal fun findMatchingBracketPair(
+    text: String,
+    cursorOffset: Int,
+    isHtml: Boolean = false
+): Pair<Int, Int>? {
     if (text.isEmpty()) return null
     val safeCursor = cursorOffset.coerceIn(0, text.length)
 
+    val openToClose = if (isHtml) BRACKET_OPEN_TO_CLOSE + ('<' to '>') else BRACKET_OPEN_TO_CLOSE
+    val closeToOpen = if (isHtml) BRACKET_CLOSE_TO_OPEN + ('>' to '<') else BRACKET_CLOSE_TO_OPEN
+
     val checkPos = when {
-        safeCursor < text.length && (text[safeCursor] in BRACKET_OPEN_TO_CLOSE || text[safeCursor] in BRACKET_CLOSE_TO_OPEN) -> safeCursor
-        safeCursor > 0 && (text[safeCursor - 1] in BRACKET_OPEN_TO_CLOSE || text[safeCursor - 1] in BRACKET_CLOSE_TO_OPEN) -> safeCursor - 1
+        safeCursor < text.length && (text[safeCursor] in openToClose || text[safeCursor] in closeToOpen) -> safeCursor
+        safeCursor > 0 && (text[safeCursor - 1] in openToClose || text[safeCursor - 1] in closeToOpen) -> safeCursor - 1
         else -> return null
     }
 
     val ch = text[checkPos]
-    if (ch in BRACKET_OPEN_TO_CLOSE) {
-        val targetClose = BRACKET_OPEN_TO_CLOSE[ch]!!
+    if (ch in openToClose) {
+        val targetClose = openToClose[ch]!!
         var depth = 0
         for (i in checkPos until text.length) {
             when (text[i]) {
@@ -762,8 +936,8 @@ internal fun findMatchingBracketPair(text: String, cursorOffset: Int): Pair<Int,
                 }
             }
         }
-    } else if (ch in BRACKET_CLOSE_TO_OPEN) {
-        val targetOpen = BRACKET_CLOSE_TO_OPEN[ch]!!
+    } else if (ch in closeToOpen) {
+        val targetOpen = closeToOpen[ch]!!
         var depth = 0
         for (i in checkPos downTo 0) {
             when (text[i]) {
@@ -779,36 +953,14 @@ internal fun findMatchingBracketPair(text: String, cursorOffset: Int): Pair<Int,
 }
 
 /**
- * Formats document indentation cleanly based on {}, (), [], and : blocks.
+ * Formats document indentation cleanly based on the language grammar.
  */
-internal fun formatDocumentIndentation(text: String, indentSize: Int = 4): String {
-    val lines = text.split("\n")
-    val sb = StringBuilder()
-    var indentLevel = 0
-    val unit = " ".repeat(indentSize)
-
-    lines.forEachIndexed { idx, rawLine ->
-        val trimmed = rawLine.trim()
-        if (trimmed.isEmpty()) {
-            if (idx < lines.lastIndex) sb.append("\n")
-            return@forEachIndexed
-        }
-
-        // Decrease indent before line if it starts with closing bracket
-        if (trimmed.startsWith("}") || trimmed.startsWith(")") || trimmed.startsWith("]")) {
-            indentLevel = (indentLevel - 1).coerceAtLeast(0)
-        }
-
-        sb.append(unit.repeat(indentLevel)).append(trimmed)
-        if (idx < lines.lastIndex) sb.append("\n")
-
-        // Count net bracket delta or trailing colon to adjust indent for subsequent lines
-        val endsWithOpen = trimmed.endsWith("{") || trimmed.endsWith("(") || trimmed.endsWith("[") || trimmed.endsWith(":")
-        if (endsWithOpen) {
-            indentLevel++
-        }
-    }
-    return sb.toString()
+internal fun formatDocumentIndentation(
+    text: String,
+    language: String = "javascript",
+    indentSize: Int = 4
+): String {
+    return LanguageSupport.formatCode(text, language, indentSize)
 }
 
 private fun updateCursorFromOffset(
@@ -824,90 +976,12 @@ private fun updateCursorFromOffset(
     onCursorPosition(line, col)
 }
 
-private val keywordRegex = Regex(
-    "\\b(fun|val|var|class|object|interface|package|import|return|if|else|when|for|while|do|try|catch|finally|throw|true|false|null|" +
-    "function|const|let|async|await|export|default|from|new|this|typeof|instanceof|def|elif|except|lambda|yield|pass|None|True|False|" +
-    "public|private|protected|static|void|int|double|float|boolean|char|string|String|Int|Boolean|Unit|List|Map|Set)\\b"
-)
-private val stringRegex = Regex("\"([^\"\\\\]|\\\\.)*\"|'([^'\\\\]|\\\\.)*'|`([^`\\\\]|\\\\.)*`")
-private val numberRegex = Regex("\\b\\d+(\\.\\d+)?\\b")
-private val commentRegex = Regex("//.*|#.*|/\\*[\\s\\S]*?\\*/")
-private val functionCallRegex = Regex("\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()")
-
 private fun highlightCodeSyntax(
     text: String,
     language: String,
     matchedBrackets: Pair<Int, Int>? = null
 ): AnnotatedString {
-    if (text.isEmpty() || text.length > 40000) {
-        return AnnotatedString(text)
-    }
-
-    return buildAnnotatedString {
-        append(text)
-
-        // 1. Keywords
-        keywordRegex.findAll(text).forEach { match ->
-            addStyle(
-                SpanStyle(color = VsCodeTheme.SyntaxKeyword, fontWeight = FontWeight.SemiBold),
-                match.range.first,
-                match.range.last + 1
-            )
-        }
-
-        // 2. Function Calls
-        functionCallRegex.findAll(text).forEach { match ->
-            addStyle(
-                SpanStyle(color = VsCodeTheme.SyntaxFunction),
-                match.range.first,
-                match.range.last + 1
-            )
-        }
-
-        // 3. Numbers
-        numberRegex.findAll(text).forEach { match ->
-            addStyle(
-                SpanStyle(color = VsCodeTheme.SyntaxNumber),
-                match.range.first,
-                match.range.last + 1
-            )
-        }
-
-        // 4. Strings (", ', `)
-        stringRegex.findAll(text).forEach { match ->
-            addStyle(
-                SpanStyle(color = VsCodeTheme.SyntaxString),
-                match.range.first,
-                match.range.last + 1
-            )
-        }
-
-        // 5. Comments (highest priority)
-        commentRegex.findAll(text).forEach { match ->
-            addStyle(
-                SpanStyle(color = VsCodeTheme.SyntaxComment),
-                match.range.first,
-                match.range.last + 1
-            )
-        }
-
-        // 6. Highlight matching bracket pair around cursor
-        if (matchedBrackets != null) {
-            val (openIdx, closeIdx) = matchedBrackets
-            val bracketStyle = SpanStyle(
-                color = Color(0xFFFFD700),
-                background = Color(0xFF3A3D41),
-                fontWeight = FontWeight.Bold,
-                textDecoration = TextDecoration.Underline
-            )
-            if (openIdx in text.indices) {
-                addStyle(bracketStyle, openIdx, openIdx + 1)
-            }
-            if (closeIdx in text.indices) {
-                addStyle(bracketStyle, closeIdx, closeIdx + 1)
-            }
-        }
-    }
+    return LanguageSupport.highlight(text, language, matchedBrackets)
 }
 
 // Legacy helper stubs kept for binary compatibility if referenced
