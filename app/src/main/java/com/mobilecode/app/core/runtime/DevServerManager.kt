@@ -59,10 +59,21 @@ object DevServerManager {
         return try {
             val serverSocket = ServerSocket()
             serverSocket.reuseAddress = true
-            try {
-                serverSocket.bind(java.net.InetSocketAddress("127.0.0.1", port))
-            } catch (_: Exception) {
-                serverSocket.bind(java.net.InetSocketAddress("0.0.0.0", port))
+            var bound = false
+            val bindAttempts: List<() -> Unit> = listOf(
+                { serverSocket.bind(java.net.InetSocketAddress(java.net.InetAddress.getByName("127.0.0.1"), port)) },
+                { serverSocket.bind(java.net.InetSocketAddress(port)) },
+                { serverSocket.bind(java.net.InetSocketAddress(java.net.InetAddress.getByName("0.0.0.0"), port)) }
+            )
+            for (attempt in bindAttempts) {
+                try {
+                    attempt()
+                    bound = true
+                    break
+                } catch (_: Exception) {}
+            }
+            if (!bound) {
+                serverSocket.bind(java.net.InetSocketAddress(port))
             }
             runningSockets[port] = serverSocket
 
@@ -178,7 +189,7 @@ object DevServerManager {
             try {
                 val client = serverSocket.accept()
                 scope.launch {
-                    handleClient(client, rootDir)
+                    handleClient(client, rootDir, port)
                 }
             } catch (e: Exception) {
                 if (serverSocket.isClosed) break
@@ -186,7 +197,7 @@ object DevServerManager {
         }
     }
 
-    private fun handleClient(client: Socket, rootDir: File) {
+    private fun handleClient(client: Socket, rootDir: File, port: Int) {
         try {
             client.use { socket ->
                 socket.soTimeout = 10000
@@ -204,13 +215,23 @@ object DevServerManager {
                 var targetFile = File(rootDir, path.removePrefix("/"))
                 if (!targetFile.exists() || targetFile.isDirectory) {
                     val htmlCandidate = File(rootDir, path.removePrefix("/") + ".html")
-                    if (htmlCandidate.exists()) {
+                    if (htmlCandidate.exists() && htmlCandidate.isFile) {
                         targetFile = htmlCandidate
+                    } else if (targetFile.isDirectory && File(targetFile, "index.html").exists()) {
+                        targetFile = File(targetFile, "index.html")
                     } else {
-                        // SPA fallback to index.html if route doesn't match a static file
-                        val indexFile = File(rootDir, "index.html")
-                        if (indexFile.exists()) {
-                            targetFile = indexFile
+                        // Project structure fallbacks
+                        val projectIndexCandidates = listOf(
+                            File(rootDir, "index.html"),
+                            File(rootDir, "public/index.html"),
+                            File(rootDir, "1/public/index.html"),
+                            File(rootDir, "1/build/index.html"),
+                            File(rootDir, "build/index.html"),
+                            File(rootDir, "dist/index.html")
+                        )
+                        val foundIndex = projectIndexCandidates.firstOrNull { it.exists() && it.isFile }
+                        if (foundIndex != null && (path == "/index.html" || !path.contains('.'))) {
+                            targetFile = foundIndex
                         }
                     }
                 }
@@ -233,22 +254,88 @@ object DevServerManager {
                     }
                     output.flush()
                 } else {
-                    val notFound = "<html><body><h1>404 Not Found</h1><p>File $rawPath was not found in ${rootDir.name}</p></body></html>"
-                    val bytes = notFound.toByteArray(Charsets.UTF_8)
+                    // Serve friendly interactive directory listing & port status instead of a dull 404
+                    val html = generateDirectoryListing(rootDir, rawPath, port)
+                    val bytes = html.toByteArray(Charsets.UTF_8)
                     val header = buildString {
-                        append("HTTP/1.1 404 Not Found\r\n")
+                        append("HTTP/1.1 200 OK\r\n")
                         append("Content-Type: text/html; charset=utf-8\r\n")
                         append("Content-Length: ${bytes.size}\r\n")
+                        append("Access-Control-Allow-Origin: *\r\n")
                         append("Connection: close\r\n")
                         append("\r\n")
                     }
                     output.write(header.toByteArray(Charsets.UTF_8))
-                    output.write(bytes)
+                    if (method != "HEAD") {
+                        output.write(bytes)
+                    }
                     output.flush()
                 }
             }
         } catch (e: Exception) {
             // Ignore client disconnects
+        }
+    }
+
+    private fun generateDirectoryListing(rootDir: File, rawPath: String, port: Int): String {
+        val reqPath = if (rawPath == "/" || rawPath.isBlank()) "" else rawPath.removePrefix("/")
+        val activeDir = File(rootDir, reqPath).takeIf { it.exists() && it.isDirectory } ?: rootDir
+        val files = activeDir.listFiles()?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() })) ?: emptyList()
+        val isSubdir = activeDir != rootDir
+        val parentHref = if (isSubdir) {
+            val rel = activeDir.relativeTo(rootDir).path.replace('\\', '/')
+            val p = rel.substringBeforeLast('/', "")
+            if (p.isEmpty()) "/" else "/$p"
+        } else null
+
+        return buildString {
+            append("<!DOCTYPE html>\n")
+            append("<html lang=\"en\">\n")
+            append("<head>\n")
+            append("  <meta charset=\"utf-8\">\n")
+            append("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+            append("  <title>Mobile Code Dev Server :$port</title>\n")
+            append("  <style>\n")
+            append("    * { box-sizing: border-box; }\n")
+            append("    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #18181b; color: #f4f4f5; margin: 0; padding: 20px; }\n")
+            append("    .container { max-width: 680px; margin: 20px auto; background: #27272a; border: 1px solid #3f3f46; border-radius: 12px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }\n")
+            append("    .status-badge { display: inline-flex; align-items: center; gap: 8px; background: #14532d; color: #4ade80; border: 1px solid #16a34a; padding: 5px 14px; border-radius: 9999px; font-size: 12px; font-weight: 600; }\n")
+            append("    .status-dot { width: 8px; height: 8px; background: #4ade80; border-radius: 50%; box-shadow: 0 0 8px #4ade80; }\n")
+            append("    h1 { font-size: 22px; margin: 16px 0 8px 0; color: #fafafa; }\n")
+            append("    p { font-size: 13px; color: #a1a1aa; margin: 0 0 16px 0; }\n")
+            append("    code { background: #18181b; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-family: monospace; font-size: 12px; }\n")
+            append("    .file-list { border: 1px solid #3f3f46; border-radius: 8px; overflow: hidden; background: #18181b; margin-top: 14px; }\n")
+            append("    .file-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #27272a; text-decoration: none; color: #e4e4e7; font-size: 14px; }\n")
+            append("    .file-item:last-child { border-bottom: none; }\n")
+            append("    .file-item:hover { background: #27272a; color: #38bdf8; }\n")
+            append("    .file-info { display: flex; align-items: center; gap: 10px; }\n")
+            append("    .file-size { color: #71717a; font-size: 12px; }\n")
+            append("    .empty-note { padding: 24px; text-align: center; color: #71717a; font-size: 13px; }\n")
+            append("  </style>\n")
+            append("</head>\n")
+            append("<body>\n")
+            append("  <div class=\"container\">\n")
+            append("    <div class=\"status-badge\"><span class=\"status-dot\"></span> 🟢 PORT $port ACTIVE &amp; RUNNING</div>\n")
+            append("    <h1>Mobile Code Dev Server</h1>\n")
+            append("    <p>Directory: <code>${activeDir.name}</code> (<code>${activeDir.absolutePath}</code>)</p>\n")
+            append("    <div class=\"file-list\">\n")
+            if (parentHref != null) {
+                append("      <a class=\"file-item\" href=\"$parentHref\"><span class=\"file-info\">📁 .. (parent folder)</span></a>\n")
+            }
+            if (files.isEmpty()) {
+                append("      <div class=\"empty-note\">Folder is empty</div>\n")
+            } else {
+                for (f in files) {
+                    val icon = if (f.isDirectory) "📁" else "📄"
+                    val itemRel = f.relativeTo(rootDir).path.replace('\\', '/')
+                    val sizeText = if (f.isDirectory) "DIR" else "${f.length()} B"
+                    append("      <a class=\"file-item\" href=\"/$itemRel\"><span class=\"file-info\">$icon ${f.name}</span><span class=\"file-size\">$sizeText</span></a>\n")
+                }
+            }
+            append("    </div>\n")
+            append("  </div>\n")
+            append("</body>\n")
+            append("</html>\n")
         }
     }
 

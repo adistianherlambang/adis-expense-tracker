@@ -419,6 +419,26 @@ class TerminalViewModel(
                 }
             }
 
+            "test-port", "testport", "check-port" -> {
+                val targetPort = args.firstOrNull()?.toIntOrNull() ?: 3000
+                session.append("Testing dev server port $targetPort ...\n")
+                val res = DevServerManager.startServer(targetPort, session.workingDir, "Test Server")
+                if (res.isSuccess) {
+                    session.append(
+                        "====================================================\n" +
+                        "  [SUCCESS] Port $targetPort is OPEN & LISTENING!\n" +
+                        "  ➜ Local:   http://127.0.0.1:$targetPort/\n" +
+                        "  ➜ Network: http://localhost:$targetPort/\n" +
+                        "  Opening test page in browser...\n" +
+                        "  Run 'port stop $targetPort' to stop this server.\n" +
+                        "====================================================\n"
+                    )
+                    DevServerManager.openInBrowser(workspaceManager.appContext, targetPort)
+                } else {
+                    session.append("[FAIL] Could not open port $targetPort: ${res.exceptionOrNull()?.message}\n")
+                }
+            }
+
             "port", "ports-control" -> {
                 val action = args.getOrNull(0) ?: "list"
                 val portNum = args.getOrNull(1)?.toIntOrNull() ?: 3000
@@ -443,10 +463,25 @@ class TerminalViewModel(
                             session.append("Failed to start server on port $portNum: ${res.exceptionOrNull()?.message}\n")
                         }
                     }
+                    "test" -> {
+                        val res = DevServerManager.startServer(portNum, session.workingDir, "Test Server")
+                        if (res.isSuccess) {
+                            session.append(
+                                "====================================================\n" +
+                                "  [SUCCESS] Port $portNum is OPEN & LISTENING!\n" +
+                                "  ➜ Local:   http://127.0.0.1:$portNum/\n" +
+                                "  Opening test page in browser...\n" +
+                                "====================================================\n"
+                            )
+                            DevServerManager.openInBrowser(workspaceManager.appContext, portNum)
+                        } else {
+                            session.append("Failed to start server on port $portNum: ${res.exceptionOrNull()?.message}\n")
+                        }
+                    }
                     else -> {
                         val servers = DevServerManager.activeServers.value
                         if (servers.isEmpty()) {
-                            session.append("No active servers. Usage: port [open|stop|start] [portNumber]\n")
+                            session.append("No active servers. Usage: port [open|stop|start|test] [portNumber]\n")
                         } else {
                             servers.forEach { s ->
                                 session.append("Port ${s.port}: ${s.url} (${s.name}) - ONLINE\n")
@@ -482,8 +517,10 @@ class TerminalViewModel(
                     session.append(
                         "Serving '${session.workingDir.name}' at:\n" +
                         "  ➜  Local:   http://127.0.0.1:$port/ (http://localhost:$port/)\n" +
-                        "Server running. Run 'port open $port' to view or 'port stop $port' to terminate.\n"
+                        "Server running. Run 'port open $port' to view or 'port stop $port' to terminate.\n" +
+                        "Opening browser...\n"
                     )
+                    DevServerManager.openInBrowser(workspaceManager.appContext, port)
                 } else {
                     session.append("serve error: ${res.exceptionOrNull()?.message}\n")
                 }
@@ -529,10 +566,15 @@ class TerminalViewModel(
             "help" -> {
                 session.append(
                     "Mobile Code Linux Shell Commands:\n" +
+                    "  test-port [port]            Test dev server port binding (e.g. test-port 3000)\n" +
+                    "  serve [port]                Start local dev server on port (e.g. serve 3000)\n" +
+                    "  ports                       List all active dev servers & forwarded ports\n" +
+                    "  port [open|stop|start|test] Control specific dev server port\n" +
                     "  node [file.js] / node       Run Node.js script or interactive V8 REPL\n" +
                     "  npm [init|install|run|list] Node Package Manager\n" +
                     "  python [file.py] / python3  Run Python 3 script or interactive REPL\n" +
                     "  pip [install|list|freeze]   Python Package Installer\n" +
+                    "  sudo [command...]           Run command in sandbox container\n" +
                     "  git [init|status|add|commit] Git version control\n" +
                     "  ls, cd, pwd, cat, mkdir, rm, cp, mv, touch, grep, find, uname, ps, df, clear\n"
                 )

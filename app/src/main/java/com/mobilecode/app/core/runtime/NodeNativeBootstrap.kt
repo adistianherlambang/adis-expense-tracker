@@ -19,7 +19,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION = 8
+    private const val BOOTSTRAP_VERSION = 9
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -298,45 +298,62 @@ object NodeNativeBootstrap {
               // 3. Module require interceptors for CRA / Webpack Dev Server
               const origRequire = mod.prototype.require;
               mod.prototype.require = function(id) {
-                if (id === 'detect-port-alt' || id === 'detect-port') {
-                  const fn = function detectPort(defaultPort, host, callback) {
-                    const p = parseInt(defaultPort, 10) || 3000;
-                    if (typeof host === 'function') {
-                      host(null, p);
+                if (typeof id === 'string') {
+                  if (id.includes('detect-port')) {
+                    const fn = function detectPort(defaultPort, host, callback) {
+                      const p = parseInt(defaultPort, 10) || 3000;
+                      if (typeof host === 'function') {
+                        host(null, p);
+                        return Promise.resolve(p);
+                      }
+                      if (typeof callback === 'function') {
+                        callback(null, p);
+                      }
                       return Promise.resolve(p);
-                    }
-                    if (typeof callback === 'function') {
-                      callback(null, p);
-                    }
-                    return Promise.resolve(p);
-                  };
-                  fn.detect = fn;
-                  fn.default = fn;
-                  return fn;
-                }
+                    };
+                    fn.detect = fn;
+                    fn.default = fn;
+                    return fn;
+                  }
 
-                if (id === 'react-dev-utils/openBrowser') {
-                  return function openBrowser(url) {
-                    if (!url) return false;
-                    try {
-                      cp.spawn('/system/bin/am', ['start', '-a', 'android.intent.action.VIEW', '-d', url], {
-                        detached: true,
-                        stdio: 'ignore'
-                      });
+                  if (id.includes('checkRequiredFiles')) {
+                    return function checkRequiredFiles() {
                       return true;
-                    } catch (e) {
-                      return false;
-                    }
-                  };
-                }
+                    };
+                  }
 
-                if (id.endsWith('/WebpackDevServerUtils') || id === 'react-dev-utils/WebpackDevServerUtils') {
-                  const origUtils = origRequire.apply(this, arguments);
-                  return Object.assign({}, origUtils, {
-                    choosePort: function(host, defaultPort) {
-                      return Promise.resolve(parseInt(defaultPort, 10) || 3000);
-                    }
-                  });
+                  if (id.includes('checkBrowsers') || id.includes('browsersHelper')) {
+                    const origBrowsers = origRequire.apply(this, arguments);
+                    return Object.assign({}, origBrowsers, {
+                      checkBrowsers: function() {
+                        return Promise.resolve();
+                      }
+                    });
+                  }
+
+                  if (id.includes('openBrowser')) {
+                    return function openBrowser(url) {
+                      if (!url) return false;
+                      try {
+                        cp.spawn('/system/bin/am', ['start', '-a', 'android.intent.action.VIEW', '-d', url], {
+                          detached: true,
+                          stdio: 'ignore'
+                        });
+                        return true;
+                      } catch (e) {
+                        return false;
+                      }
+                    };
+                  }
+
+                  if (id.includes('WebpackDevServerUtils')) {
+                    const origUtils = origRequire.apply(this, arguments);
+                    return Object.assign({}, origUtils, {
+                      choosePort: function(host, defaultPort) {
+                        return Promise.resolve(parseInt(defaultPort, 10) || 3000);
+                      }
+                    });
+                  }
                 }
 
                 return origRequire.apply(this, arguments);

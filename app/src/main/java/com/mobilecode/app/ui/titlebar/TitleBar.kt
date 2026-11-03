@@ -23,7 +23,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,35 +30,35 @@ import com.mobilecode.app.core.designsystem.VsCodeTheme
 
 @Composable
 fun TitleBar(
-    projectName: String?,
-    onOpenCommandPalette: () -> Unit,
-    onToggleSidebar: () -> Unit,
-    onToggleTerminal: () -> Unit,
-    onOpenNewWindow: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+        projectName: String?,
+        onOpenCommandPalette: () -> Unit,
+        onToggleSidebar: () -> Unit,
+        onToggleTerminal: () -> Unit,
+        onOpenNewWindow: (() -> Unit)? = null,
+        modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(35.dp)
-            .background(VsCodeTheme.TitleBarBackground)
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+            modifier =
+                    modifier.fillMaxWidth()
+                            .height(35.dp)
+                            .background(VsCodeTheme.TitleBarBackground)
+                            .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
     ) {
         // Left: App Logo & Menus
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Icon(
-                imageVector = Icons.Default.Code,
-                contentDescription = "Mobile Code Logo",
-                tint = VsCodeTheme.BadgeBackground,
-                modifier = Modifier.size(18.dp)
+                    imageVector = Icons.Default.Code,
+                    contentDescription = "Mobile Code Logo",
+                    tint = VsCodeTheme.BadgeBackground,
+                    modifier = Modifier.size(18.dp)
             )
             Text(
-                text = "Mobile Code v2.5.8",
+                text = "Mobile Code v2.5.9",
                 modifier = Modifier,
                 color = VsCodeTheme.Foreground,
                 fontSize = 12.sp,
@@ -69,75 +68,67 @@ fun TitleBar(
 
         // Center: VS Code Command Center Search Bar
         Box(
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .padding(horizontal = 16.dp)
-                .height(24.dp)
-                .background(VsCodeTheme.EditorBackground, RoundedCornerShape(4.dp))
-                .border(1.dp, VsCodeTheme.BorderColor, RoundedCornerShape(4.dp))
-                .clickable(onClick = onOpenCommandPalette)
-                .padding(horizontal = 12.dp),
-            contentAlignment = Alignment.Center
+                modifier =
+                        Modifier.weight(1f, fill = false)
+                                .padding(horizontal = 16.dp)
+                                .height(24.dp)
+                                .background(VsCodeTheme.EditorBackground, RoundedCornerShape(4.dp))
+                                .border(1.dp, VsCodeTheme.BorderColor, RoundedCornerShape(4.dp))
+                                .clickable(onClick = onOpenCommandPalette)
+                                .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Search",
-                    tint = VsCodeTheme.SecondaryForeground,
-                    modifier = Modifier.size(13.dp)
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = VsCodeTheme.SecondaryForeground,
+                        modifier = Modifier.size(13.dp)
                 )
                 Text(
-                    text = if (projectName.isNullOrBlank()) "Mobile Code (Ctrl+Shift+P)" else "$projectName (Ctrl+Shift+P)",
-                    color = VsCodeTheme.SecondaryForeground,
-                    fontSize = 11.sp
+                        text =
+                                if (projectName.isNullOrBlank()) "Mobile Code (Ctrl+Shift+P)"
+                                else "$projectName (Ctrl+Shift+P)",
+                        color = VsCodeTheme.SecondaryForeground,
+                        fontSize = 11.sp
                 )
             }
         }
 
         // Right: Window actions & view toggles
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             if (onOpenNewWindow != null) {
-                IconButton(
-                    onClick = onOpenNewWindow,
-                    modifier = Modifier.size(28.dp)
-                ) {
+                IconButton(onClick = onOpenNewWindow, modifier = Modifier.size(28.dp)) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                        contentDescription = "New Window (Ctrl+N)",
-                        tint = VsCodeTheme.Foreground,
-                        modifier = Modifier.size(15.dp)
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = "New Window (Ctrl+N)",
+                            tint = VsCodeTheme.Foreground,
+                            modifier = Modifier.size(15.dp)
                     )
                 }
             }
-            IconButton(
-                onClick = onToggleSidebar,
-                modifier = Modifier.size(28.dp)
-            ) {
+            IconButton(onClick = onToggleSidebar, modifier = Modifier.size(28.dp)) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ViewSidebar,
-                    contentDescription = "Toggle Sidebar",
-                    tint = VsCodeTheme.Foreground,
-                    modifier = Modifier.size(16.dp)
+                        imageVector = Icons.AutoMirrored.Filled.ViewSidebar,
+                        contentDescription = "Toggle Sidebar",
+                        tint = VsCodeTheme.Foreground,
+                        modifier = Modifier.size(16.dp)
                 )
             }
-            IconButton(
-                onClick = onToggleTerminal,
-                modifier = Modifier.size(28.dp)
-            ) {
+            IconButton(onClick = onToggleTerminal, modifier = Modifier.size(28.dp)) {
                 Icon(
-                    imageVector = Icons.Outlined.Terminal,
-                    contentDescription = "Toggle Terminal",
-                    tint = VsCodeTheme.Foreground,
-                    modifier = Modifier.size(16.dp)
+                        imageVector = Icons.Outlined.Terminal,
+                        contentDescription = "Toggle Terminal",
+                        tint = VsCodeTheme.Foreground,
+                        modifier = Modifier.size(16.dp)
                 )
             }
         }
     }
 }
-
