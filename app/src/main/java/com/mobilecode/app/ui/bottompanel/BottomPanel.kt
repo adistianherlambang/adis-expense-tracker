@@ -6,10 +6,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,7 +34,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.HorizontalSplit
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.VerticalSplit
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -63,6 +67,8 @@ import com.mobilecode.app.core.terminal.DebugConsoleManager
 import com.mobilecode.app.core.terminal.OutputLogger
 import com.mobilecode.app.core.terminal.TerminalViewModel
 import com.mobilecode.app.core.terminal.TerminalWebView
+import com.mobilecode.app.ui.components.HorizontalResizeHandle
+import com.mobilecode.app.ui.components.VerticalResizeHandle
 import java.io.File
 
 enum class PanelTab {
@@ -85,6 +91,9 @@ fun BottomPanel(
 ) {
     var activeTab by remember { mutableStateOf(PanelTab.TERMINAL) }
     var isMaximized by remember { mutableStateOf(false) }
+    var isSplitTerminal by remember { mutableStateOf(false) }
+    var splitHorizontal by remember { mutableStateOf(false) }
+    var terminalSplitRatio by remember { mutableStateOf(0.5f) }
 
     val sessions by terminalViewModel.sessions.collectAsState()
     val activeSessionIndex by terminalViewModel.activeSessionIndex.collectAsState()
@@ -197,6 +206,41 @@ fun BottomPanel(
                     }
 
                     IconButton(
+                        onClick = {
+                            if (!isSplitTerminal) {
+                                if (sessions.size < 2) {
+                                    terminalViewModel.createSession()
+                                }
+                                isSplitTerminal = true
+                            } else {
+                                isSplitTerminal = false
+                            }
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (splitHorizontal) Icons.Default.HorizontalSplit else Icons.Default.VerticalSplit,
+                            contentDescription = if (isSplitTerminal) "Close Split Terminal" else "Split Terminal",
+                            tint = if (isSplitTerminal) VsCodeTheme.FocusBorder else VsCodeTheme.Foreground,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    if (isSplitTerminal && sessions.size >= 2) {
+                        IconButton(
+                            onClick = { splitHorizontal = !splitHorizontal },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (splitHorizontal) Icons.Default.VerticalSplit else Icons.Default.HorizontalSplit,
+                                contentDescription = if (splitHorizontal) "Switch to Side-by-Side Split" else "Switch to Top-Bottom Split",
+                                tint = VsCodeTheme.Foreground,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+
+                    IconButton(
                         onClick = { terminalViewModel.clearActiveSession() },
                         modifier = Modifier.size(24.dp)
                     ) {
@@ -279,12 +323,109 @@ fun BottomPanel(
         ) {
             when (activeTab) {
                 PanelTab.TERMINAL -> {
-                    if (activeSession != null) {
-                        TerminalWebView(
-                            session = activeSession,
-                            terminalViewModel = terminalViewModel,
-                            onTerminalFocused = onTerminalFocused
-                        )
+                    if (isSplitTerminal && sessions.size >= 2) {
+                        val primaryIdx = 0
+                        val secondaryIdx = if (activeSessionIndex > 0) activeSessionIndex else 1
+                        val firstSession = sessions.getOrNull(primaryIdx) ?: sessions.first()
+                        val secondSession = sessions.getOrNull(secondaryIdx) ?: sessions.last()
+
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                            if (!splitHorizontal) {
+                                // Side-by-side split: adjust width
+                                val totalWidth = maxWidth
+                                Row(modifier = Modifier.fillMaxSize()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(terminalSplitRatio)
+                                            .fillMaxHeight()
+                                    ) {
+                                        TerminalWebView(
+                                            session = firstSession,
+                                            terminalViewModel = terminalViewModel,
+                                            onTerminalFocused = {
+                                                terminalViewModel.selectSession(primaryIdx)
+                                                onTerminalFocused?.invoke()
+                                            }
+                                        )
+                                    }
+
+                                    VerticalResizeHandle(
+                                        onDeltaX = { deltaX ->
+                                            if (totalWidth.value > 0) {
+                                                val deltaRatio = deltaX.value / totalWidth.value
+                                                terminalSplitRatio = (terminalSplitRatio + deltaRatio).coerceIn(0.15f, 0.85f)
+                                            }
+                                        }
+                                    )
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f - terminalSplitRatio)
+                                            .fillMaxHeight()
+                                    ) {
+                                        TerminalWebView(
+                                            session = secondSession,
+                                            terminalViewModel = terminalViewModel,
+                                            onTerminalFocused = {
+                                                terminalViewModel.selectSession(secondaryIdx)
+                                                onTerminalFocused?.invoke()
+                                            }
+                                        )
+                                    }
+                                }
+                            } else {
+                                // Top-and-bottom split: adjust height
+                                val totalHeight = maxHeight
+                                Column(modifier = Modifier.fillMaxSize()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(terminalSplitRatio)
+                                            .fillMaxWidth()
+                                    ) {
+                                        TerminalWebView(
+                                            session = firstSession,
+                                            terminalViewModel = terminalViewModel,
+                                            onTerminalFocused = {
+                                                terminalViewModel.selectSession(primaryIdx)
+                                                onTerminalFocused?.invoke()
+                                            }
+                                        )
+                                    }
+
+                                    HorizontalResizeHandle(
+                                        onDeltaY = { deltaY ->
+                                            if (totalHeight.value > 0) {
+                                                val deltaRatio = deltaY.value / totalHeight.value
+                                                terminalSplitRatio = (terminalSplitRatio + deltaRatio).coerceIn(0.15f, 0.85f)
+                                            }
+                                        }
+                                    )
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f - terminalSplitRatio)
+                                            .fillMaxWidth()
+                                    ) {
+                                        TerminalWebView(
+                                            session = secondSession,
+                                            terminalViewModel = terminalViewModel,
+                                            onTerminalFocused = {
+                                                terminalViewModel.selectSession(secondaryIdx)
+                                                onTerminalFocused?.invoke()
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        if (activeSession != null) {
+                            TerminalWebView(
+                                session = activeSession,
+                                terminalViewModel = terminalViewModel,
+                                onTerminalFocused = onTerminalFocused
+                            )
+                        }
                     }
                 }
 
