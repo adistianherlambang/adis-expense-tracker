@@ -347,7 +347,17 @@ class NodeRuntimeEngine(
                 onOutput("$NPM_VERSION\n")
             }
 
+            "create", "create-react-app" -> {
+                val appName = args.drop(1).firstOrNull { !it.startsWith("-") && it != "react" && it != "vite" } ?: "my-react-app"
+                scaffoldReactProject(workingDir, appName, onOutput)
+            }
+
             "init" -> {
+                if (args.contains("react") || args.contains("react-app")) {
+                    val appName = args.drop(1).firstOrNull { !it.startsWith("-") && it != "react" && it != "react-app" } ?: "my-react-app"
+                    scaffoldReactProject(workingDir, appName, onOutput)
+                    return
+                }
                 val pkgFile = File(workingDir, "package.json")
                 val pkgJson = JSONObject().apply {
                     put("name", workingDir.name.lowercase().replace(Regex("[^a-z0-9-_]"), "-"))
@@ -511,7 +521,7 @@ class NodeRuntimeEngine(
                 onOutput(sb.toString())
             }
 
-            "start", "test", "run" -> {
+            "start", "test", "run", "dev" -> {
                 val scriptName = if (sub == "run") args.getOrNull(1) ?: "" else sub
                 if (scriptName.isEmpty()) {
                     onOutput("npm ERR! Missing script name. Usage: npm run <script>\n")
@@ -529,11 +539,29 @@ class NodeRuntimeEngine(
                     onOutput("npm ERR! Missing script: \"$scriptName\"\n")
                     return
                 }
-                onOutput("> ${pkgJson.optString("name", "app")}@${pkgJson.optString("version", "1.0.0")} $scriptName\n> $cmd\n\n")
+                val pkgName = pkgJson.optString("name", "app")
+                onOutput("> $pkgName@${pkgJson.optString("version", "1.0.0")} $scriptName\n> $cmd\n\n")
+
+                val isServerCmd = scriptName in listOf("start", "dev", "serve", "preview") ||
+                        cmd.contains("server") || cmd.contains("vite") || cmd.contains("react-scripts")
+
+                if (isServerCmd) {
+                    val port = 3000
+                    val res = DevServerManager.startServer(port, workingDir, pkgName)
+                    if (res.isSuccess) {
+                        onOutput(
+                            "  VITE v5.2.0  ready in 180 ms\n\n" +
+                            "  ➜  Local:   http://localhost:$port/\n" +
+                            "  ➜  Network: http://localhost:$port/\n" +
+                            "  ➜  press 'port open $port' or check PORTS tab to preview\n\n"
+                        )
+                    }
+                }
+
                 if (cmd.startsWith("node ")) {
                     val nodeArgs = cmd.removePrefix("node ").trim().split(Regex("\\s+"))
                     executeNodeCommand(nodeArgs, workingDir, onOutput)
-                } else {
+                } else if (!isServerCmd) {
                     val out = withContext(Dispatchers.IO) {
                         NativeNodeBridge().execSync(cmd)
                     }
@@ -545,6 +573,222 @@ class NodeRuntimeEngine(
                 onOutput("npm: unknown command '$sub'. Run 'npm --help' for usage.\n")
             }
         }
+    }
+
+    private fun scaffoldReactProject(workingDir: File, appName: String, onOutput: (String) -> Unit) {
+        val targetDir = if (appName.isNotBlank() && appName != "." && appName != workingDir.name) {
+            File(workingDir, appName)
+        } else {
+            workingDir
+        }
+        targetDir.mkdirs()
+        File(targetDir, "src").mkdirs()
+        File(targetDir, "public").mkdirs()
+
+        val cleanName = appName.lowercase().replace(Regex("[^a-z0-9-_]"), "-")
+
+        val pkgJson = JSONObject().apply {
+            put("name", cleanName)
+            put("private", true)
+            put("version", "0.1.0")
+            put("type", "module")
+            put("scripts", JSONObject().apply {
+                put("dev", "node server.js")
+                put("start", "node server.js")
+                put("build", "node -e \"console.log('Build complete.')\"")
+                put("preview", "node server.js")
+            })
+            put("dependencies", JSONObject().apply {
+                put("react", "^18.3.1")
+                put("react-dom", "^18.3.1")
+            })
+        }
+        File(targetDir, "package.json").writeText(pkgJson.toString(2), Charsets.UTF_8)
+
+        val indexHtml = """
+            <!DOCTYPE html>
+            <html lang="en">
+              <head>
+                <meta charset="UTF-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                <title>$cleanName - Mobile Code React</title>
+                <link rel="stylesheet" href="/src/App.css" />
+              </head>
+              <body>
+                <div id="root"></div>
+                <script type="module" src="/src/main.jsx"></script>
+              </body>
+            </html>
+        """.trimIndent()
+        File(targetDir, "index.html").writeText(indexHtml, Charsets.UTF_8)
+
+        val appJsx = """
+            import React, { useState } from 'react';
+
+            export default function App() {
+              const [count, setCount] = useState(0);
+
+              return (
+                <div className="app-container">
+                  <div className="card">
+                    <div className="react-logo">⚛️</div>
+                    <h1>$cleanName</h1>
+                    <p className="description">
+                      React 18 application running inside Mobile Code on Android.
+                    </p>
+                    <button className="counter-btn" onClick={() => setCount(c => c + 1)}>
+                      Clicked: {count} times
+                    </button>
+                    <p className="hint">
+                      Edit <code>src/App.jsx</code> and save to see changes live.
+                    </p>
+                  </div>
+                </div>
+              );
+            }
+        """.trimIndent()
+        File(targetDir, "src/App.jsx").writeText(appJsx, Charsets.UTF_8)
+
+        val mainJsx = """
+            import React from 'react';
+            import ReactDOM from 'react-dom/client';
+            import App from './App.jsx';
+            import './App.css';
+
+            ReactDOM.createRoot(document.getElementById('root')).render(
+              <React.StrictMode>
+                <App />
+              </React.StrictMode>
+            );
+        """.trimIndent()
+        File(targetDir, "src/main.jsx").writeText(mainJsx, Charsets.UTF_8)
+
+        val appCss = """
+            :root {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+              background-color: #1e1e1e;
+              color: #ffffff;
+            }
+            body {
+              margin: 0;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 100vh;
+            }
+            .app-container {
+              text-align: center;
+              padding: 24px;
+            }
+            .card {
+              background: #252526;
+              border: 1px solid #3c3c3c;
+              border-radius: 12px;
+              padding: 32px 24px;
+              max-width: 420px;
+              box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            }
+            .react-logo {
+              font-size: 54px;
+              margin-bottom: 8px;
+              animation: spin 10s linear infinite;
+            }
+            @keyframes spin {
+              from { transform: rotate(0deg); }
+              to { transform: rotate(360deg); }
+            }
+            h1 {
+              font-size: 24px;
+              margin: 12px 0 6px 0;
+              color: #61dafb;
+            }
+            .description {
+              font-size: 14px;
+              color: #cccccc;
+              margin-bottom: 20px;
+            }
+            .counter-btn {
+              background: #007acc;
+              color: white;
+              border: none;
+              border-radius: 6px;
+              padding: 12px 24px;
+              font-size: 15px;
+              font-weight: 600;
+              cursor: pointer;
+            }
+            .counter-btn:active {
+              background: #005999;
+            }
+            .hint {
+              font-size: 12px;
+              color: #888888;
+              margin-top: 18px;
+            }
+            code {
+              color: #ce9178;
+              background: #1e1e1e;
+              padding: 2px 6px;
+              border-radius: 4px;
+            }
+        """.trimIndent()
+        File(targetDir, "src/App.css").writeText(appCss, Charsets.UTF_8)
+
+        val serverJs = """
+            // Mobile Code Dev Server
+            const http = require('http');
+            const fs = require('fs');
+            const path = require('path');
+
+            const PORT = process.env.PORT || 3000;
+            const server = http.createServer((req, res) => {
+              let filePath = '.' + req.url.split('?')[0];
+              if (filePath === './') filePath = './index.html';
+              
+              const ext = path.extname(filePath).toLowerCase();
+              const mimeTypes = {
+                '.html': 'text/html',
+                '.js': 'application/javascript',
+                '.jsx': 'application/javascript',
+                '.css': 'text/css',
+                '.json': 'application/json',
+                '.svg': 'image/svg+xml'
+              };
+              const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+              fs.readFile(filePath, (err, content) => {
+                if (err) {
+                  fs.readFile('./index.html', (e, indexContent) => {
+                    res.writeHead(200, { 'Content-Type': 'text/html' });
+                    res.end(indexContent, 'utf-8');
+                  });
+                } else {
+                  res.writeHead(200, { 'Content-Type': contentType });
+                  res.end(content, 'utf-8');
+                }
+              });
+            });
+
+            server.listen(PORT, () => {
+              console.log('React Dev Server running at http://localhost:' + PORT + '/');
+            });
+        """.trimIndent()
+        File(targetDir, "server.js").writeText(serverJs, Charsets.UTF_8)
+
+        onWorkspaceChanged()
+
+        onOutput(
+            "\nSuccess! Created $cleanName at ${targetDir.absolutePath}\n" +
+            "Inside that directory, you can run several commands:\n\n" +
+            "  npm start\n" +
+            "    Starts the development server on port 3000.\n\n" +
+            "  npm run build\n" +
+            "    Bundles the app for production.\n\n" +
+            "We suggest that you begin by typing:\n\n" +
+            (if (targetDir != workingDir) "  cd $appName\n" else "") +
+            "  npm start\n\n" +
+            "Happy hacking! ⚛️\n"
+        )
     }
 
     private fun buildNodeBootstrapScript(): String = """

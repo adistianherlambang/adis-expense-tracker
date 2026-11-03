@@ -69,6 +69,14 @@ class PythonRuntimeEngine(
                     }
                     onWorkspaceChanged()
                     onOutput("Created virtual environment in ${File(workingDir, venvName).absolutePath}\n")
+                } else if (mod == "http.server") {
+                    val port = args.getOrNull(2)?.toIntOrNull() ?: 8000
+                    val res = DevServerManager.startServer(port, workingDir, "Python http.server")
+                    if (res.isSuccess) {
+                        onOutput("Serving HTTP on 0.0.0.0 port $port (http://localhost:$port/) ...\n")
+                    } else {
+                        onOutput("OSError: [Errno 98] Address already in use (port $port): ${res.exceptionOrNull()?.message}\n")
+                    }
                 } else {
                     onOutput("python3: No module named $mod\n")
                 }

@@ -1,9 +1,12 @@
 package com.mobilecode.app.core.terminal
 
+import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mobilecode.app.core.filesystem.WorkspaceManager
 import com.mobilecode.app.core.git.GitClient
+import com.mobilecode.app.core.runtime.DevServerManager
 import com.mobilecode.app.core.runtime.NodeRuntimeEngine
 import com.mobilecode.app.core.runtime.PythonRuntimeEngine
 import kotlinx.coroutines.Dispatchers
@@ -351,6 +354,100 @@ class TerminalViewModel(
 
             "npm", "npx" -> {
                 nodeEngine.executeNpmCommand(args, session.workingDir) { session.append(it) }
+            }
+
+            "create-react-app" -> {
+                val appName = args.firstOrNull { !it.startsWith("-") } ?: "my-react-app"
+                nodeEngine.executeNpmCommand(listOf("create-react-app", appName), session.workingDir) { session.append(it) }
+            }
+
+            "ports" -> {
+                val servers = DevServerManager.activeServers.value
+                if (servers.isEmpty()) {
+                    session.append("No active dev servers running on forwarded ports.\nRun 'npm start' or 'serve 3000' to start a server on port 3000.\n")
+                } else {
+                    val sb = StringBuilder("PORT   STATUS   URL                     DIRECTORY\n")
+                    sb.append("------ -------- ----------------------- --------------------------\n")
+                    servers.forEach { s ->
+                        sb.append("${s.port}".padEnd(7))
+                            .append("ONLINE   ")
+                            .append(s.url.padEnd(24))
+                            .append(s.rootDir.name)
+                            .append("\n")
+                    }
+                    session.append(sb.toString())
+                }
+            }
+
+            "port", "ports-control" -> {
+                val action = args.getOrNull(0) ?: "list"
+                val portNum = args.getOrNull(1)?.toIntOrNull() ?: 3000
+                when (action) {
+                    "open" -> {
+                        DevServerManager.openInBrowser(workspaceManager.appContext, portNum)
+                        session.append("Opened http://localhost:$portNum in browser.\n")
+                    }
+                    "stop", "kill" -> {
+                        val stopped = DevServerManager.stopServer(portNum)
+                        if (stopped) {
+                            session.append("Stopped server on port $portNum.\n")
+                        } else {
+                            session.append("No server was running on port $portNum.\n")
+                        }
+                    }
+                    "start" -> {
+                        val res = DevServerManager.startServer(portNum, session.workingDir, session.workingDir.name)
+                        if (res.isSuccess) {
+                            session.append("Started dev server on http://localhost:$portNum (directory: ${session.workingDir.name})\n")
+                        } else {
+                            session.append("Failed to start server on port $portNum: ${res.exceptionOrNull()?.message}\n")
+                        }
+                    }
+                    else -> {
+                        val servers = DevServerManager.activeServers.value
+                        if (servers.isEmpty()) {
+                            session.append("No active servers. Usage: port [open|stop|start] [portNumber]\n")
+                        } else {
+                            servers.forEach { s ->
+                                session.append("Port ${s.port}: ${s.url} (${s.name}) - ONLINE\n")
+                            }
+                        }
+                    }
+                }
+            }
+
+            "open" -> {
+                val portArg = args.firstOrNull()?.toIntOrNull()
+                if (portArg != null) {
+                    DevServerManager.openInBrowser(workspaceManager.appContext, portArg)
+                    session.append("Opened http://localhost:$portArg in browser.\n")
+                } else {
+                    val url = args.firstOrNull() ?: "http://localhost:3000"
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        workspaceManager.appContext.startActivity(intent)
+                        session.append("Opened $url in browser.\n")
+                    } catch (e: Exception) {
+                        session.append("open: ${e.message}\n")
+                    }
+                }
+            }
+
+            "serve" -> {
+                val port = args.firstOrNull()?.toIntOrNull() ?: 3000
+                val res = DevServerManager.startServer(port, session.workingDir, session.workingDir.name)
+                if (res.isSuccess) {
+                    session.append(
+                        "Serving '${session.workingDir.name}' at:\n" +
+                        "  ➜  Local:   http://localhost:$port/\n" +
+                        "  ➜  Network: http://localhost:$port/\n" +
+                        "Server running. Run 'port open $port' to view or 'port stop $port' to terminate.\n"
+                    )
+                } else {
+                    session.append("serve error: ${res.exceptionOrNull()?.message}\n")
+                }
             }
 
             "python", "python3", "py" -> {

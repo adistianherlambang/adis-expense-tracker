@@ -47,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -57,6 +58,7 @@ import com.mobilecode.app.core.designsystem.VsCodeTheme
 import com.mobilecode.app.core.editor.DiagnosticItem
 import com.mobilecode.app.core.editor.DiagnosticSeverity
 import com.mobilecode.app.core.editor.EditorViewModel
+import com.mobilecode.app.core.runtime.DevServerManager
 import com.mobilecode.app.core.terminal.DebugConsoleManager
 import com.mobilecode.app.core.terminal.OutputLogger
 import com.mobilecode.app.core.terminal.TerminalViewModel
@@ -502,47 +504,152 @@ fun BottomPanel(
                 }
 
                 PanelTab.PORTS -> {
+                    val activeServers by DevServerManager.activeServers.collectAsState()
+                    val context = LocalContext.current
+                    val currentWsDir = activeSession?.workingDir
+
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(12.dp)
+                            .verticalScroll(rememberScrollState())
                     ) {
-                        Text(
-                            text = "FORWARDED PORTS & LOCAL SERVERS",
-                            color = VsCodeTheme.SecondaryForeground,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(VsCodeTheme.SidebarBackground, RoundedCornerShape(4.dp))
-                                .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(4.dp))
-                                .padding(10.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column {
-                                Text(
-                                    text = "Port 3000 (Dev Server)",
-                                    color = VsCodeTheme.Foreground,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "http://localhost:3000",
-                                    color = VsCodeTheme.FocusBorder,
-                                    fontSize = 11.sp,
-                                    fontFamily = VsCodeMonospaceFont
-                                )
-                            }
                             Text(
-                                text = "READY",
-                                color = VsCodeTheme.GitAdded,
+                                text = "FORWARDED PORTS & DEV SERVERS",
+                                color = VsCodeTheme.SecondaryForeground,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
+                            if (activeServers.isEmpty()) {
+                                Row(
+                                    modifier = Modifier
+                                        .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(3.dp))
+                                        .clickable {
+                                            if (currentWsDir != null) {
+                                                DevServerManager.startServer(3000, currentWsDir, currentWsDir.name)
+                                            }
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Start Port 3000",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "Start Port 3000",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        if (activeServers.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(VsCodeTheme.SidebarBackground, RoundedCornerShape(4.dp))
+                                    .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(4.dp))
+                                    .padding(14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No active dev servers. Run 'npm start' or 'serve 3000' in Terminal, or tap 'Start Port 3000' above.",
+                                    color = VsCodeTheme.SecondaryForeground,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        } else {
+                            activeServers.forEach { server ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .background(VsCodeTheme.SidebarBackground, RoundedCornerShape(4.dp))
+                                        .border(0.5.dp, VsCodeTheme.FocusBorder, RoundedCornerShape(4.dp))
+                                        .padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .background(VsCodeTheme.GitAdded, RoundedCornerShape(4.dp))
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Port ${server.port} (${server.name})",
+                                                color = VsCodeTheme.Foreground,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                        Text(
+                                            text = server.url,
+                                            color = VsCodeTheme.FocusBorder,
+                                            fontSize = 11.sp,
+                                            fontFamily = VsCodeMonospaceFont
+                                        )
+                                        Text(
+                                            text = "Root: ${server.rootDir.absolutePath}",
+                                            color = VsCodeTheme.SecondaryForeground,
+                                            fontSize = 10.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(3.dp))
+                                                .clickable {
+                                                    DevServerManager.openInBrowser(context, server.port)
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "Open Browser",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .background(Color(0xFF4D2020), RoundedCornerShape(3.dp))
+                                                .clickable {
+                                                    DevServerManager.stopServer(server.port)
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "Stop",
+                                                color = VsCodeTheme.ErrorColor,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
