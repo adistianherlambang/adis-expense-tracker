@@ -224,6 +224,14 @@ class TerminalViewModel(
         val session = activeSession ?: return
         val trimmed = rawCommand.trim()
 
+        // Always clear the command input buffer when a command is submitted
+        _commandInput.value = ""
+
+        if (trimmed.isNotBlank() && (commandHistory.isEmpty() || commandHistory.last() != trimmed)) {
+            commandHistory.add(trimmed)
+            historyIndex = commandHistory.size
+        }
+
         // 1. Check if session is inside interactive Node.js or Python REPL
         if (session.replMode == "NODE") {
             session.append("> $rawCommand\n")

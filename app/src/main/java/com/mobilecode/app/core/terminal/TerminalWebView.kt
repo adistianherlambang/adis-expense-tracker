@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
@@ -63,6 +65,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TransformedText
@@ -137,19 +140,28 @@ fun TerminalWebView(
     fun executeLinesSequentially(rawText: String) {
         val normalized = rawText.replace("\r\n", "\n")
         val lines = normalized.split("\n")
-        if (lines.size == 1) {
-            val clean = lines[0].trimEnd('\r', '\n')
-            terminalViewModel.updateCommandInput(clean)
-            terminalViewModel.submitCurrentCommand()
+        val endsWithNewline = normalized.endsWith("\n")
+
+        if (lines.size == 2 && lines[0].isEmpty() && lines[1].isEmpty()) {
+            terminalViewModel.sendCommand("")
         } else {
             lines.forEachIndexed { idx, line ->
                 val cleanLine = line.trimEnd('\r', '\n')
-                if (idx == lines.lastIndex && !normalized.endsWith("\n")) {
+                if (idx == lines.lastIndex && !endsWithNewline) {
                     terminalViewModel.updateCommandInput(cleanLine)
                 } else if (cleanLine.isNotBlank()) {
                     terminalViewModel.sendCommand(cleanLine)
                 }
             }
+        }
+
+        if (endsWithNewline) {
+            terminalViewModel.updateCommandInput("")
+            val newFull = prefixText
+            textFieldValue = TextFieldValue(
+                text = newFull,
+                selection = TextRange(newFull.length)
+            )
         }
     }
 
@@ -173,7 +185,12 @@ fun TerminalWebView(
                 selection = TextRange(expected.length)
             )
         }
-        verticalScrollState.animateScrollTo(verticalScrollState.maxValue)
+        verticalScrollState.scrollTo(verticalScrollState.maxValue)
+    }
+
+    // Auto-scroll to the bottom whenever output expansion updates the scroll max value
+    LaunchedEffect(verticalScrollState.maxValue) {
+        verticalScrollState.scrollTo(verticalScrollState.maxValue)
     }
 
     val terminalVisualTransformation = remember(prefixText.length) {
@@ -185,23 +202,31 @@ fun TerminalWebView(
         }
     }
 
-    val clipboardKeyHandler = Modifier.onPreviewKeyEvent { keyEvent ->
-        if (keyEvent.type == KeyEventType.KeyDown && (keyEvent.isCtrlPressed || keyEvent.isMetaPressed)) {
-            when (keyEvent.key) {
-                Key.C -> {
-                    val hasSelection = textFieldValue.selection.min != textFieldValue.selection.max
-                    if (keyEvent.isShiftPressed || keyEvent.isMetaPressed || hasSelection) {
-                        copyFromTerminal()
-                        true
-                    } else {
-                        false
+    val terminalKeyHandler = Modifier.onPreviewKeyEvent { keyEvent ->
+        if (keyEvent.type == KeyEventType.KeyDown) {
+            if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
+                when (keyEvent.key) {
+                    Key.C -> {
+                        val hasSelection = textFieldValue.selection.min != textFieldValue.selection.max
+                        if (keyEvent.isShiftPressed || keyEvent.isMetaPressed || hasSelection) {
+                            copyFromTerminal()
+                            true
+                        } else {
+                            terminalViewModel.sendInput("\u0003")
+                            true
+                        }
                     }
+                    Key.V -> {
+                        pasteIntoTerminal()
+                        true
+                    }
+                    else -> false
                 }
-                Key.V -> {
-                    pasteIntoTerminal()
-                    true
-                }
-                else -> false
+            } else if (keyEvent.key == Key.Enter || keyEvent.key == Key.NumPadEnter) {
+                terminalViewModel.submitCurrentCommand()
+                true
+            } else {
+                false
             }
         } else {
             false
@@ -212,7 +237,7 @@ fun TerminalWebView(
         modifier = modifier
             .fillMaxSize()
             .background(VsCodeTheme.PanelBackground)
-            .then(clipboardKeyHandler)
+            .then(terminalKeyHandler)
     ) {
         // Single Compact Action & Quick-Command Strip (Copy, Paste, Clear, History, Quick Chips)
         Row(
@@ -426,6 +451,21 @@ fun TerminalWebView(
                         }
                     }
                 },
+                keyboardOptions = KeyboardOptions(
+                    imeAction = ImeAction.Send,
+                    autoCorrectEnabled = false
+                ),
+                keyboardActions = KeyboardActions(
+                    onSend = {
+                        terminalViewModel.submitCurrentCommand()
+                    },
+                    onDone = {
+                        terminalViewModel.submitCurrentCommand()
+                    },
+                    onGo = {
+                        terminalViewModel.submitCurrentCommand()
+                    }
+                ),
                 textStyle = TextStyle(
                     color = Color(0xFFD4D4D4),
                     fontFamily = VsCodeMonospaceFont,
