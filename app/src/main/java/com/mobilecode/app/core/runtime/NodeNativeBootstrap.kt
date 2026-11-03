@@ -19,7 +19,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION = 9
+    private const val BOOTSTRAP_VERSION = 10
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -350,7 +350,9 @@ object NodeNativeBootstrap {
                     const origUtils = origRequire.apply(this, arguments);
                     return Object.assign({}, origUtils, {
                       choosePort: function(host, defaultPort) {
-                        return Promise.resolve(parseInt(defaultPort, 10) || 3000);
+                        const p = parseInt(defaultPort, 10) || 3000;
+                        try { console.log("[DEV_SERVER] Selected port " + p + " on loopback interface."); } catch (_) {}
+                        return Promise.resolve(p);
                       }
                     });
                   }
@@ -360,9 +362,17 @@ object NodeNativeBootstrap {
               };
 
               const USR_DIR = process.env.MOBILE_CODE_USR_DIR || path.resolve(process.env.HOME || '/', '../usr');
+              const SHIM_FILE = path.join(USR_DIR, 'lib/android-shim.js');
               const NPM_CLI_JS = process.env.MOBILE_CODE_NPM_CLI || path.join(USR_DIR, 'lib/node_modules/npm/bin/npm-cli.js');
               const NPX_CLI_JS = process.env.MOBILE_CODE_NPX_CLI || path.join(USR_DIR, 'lib/node_modules/npm/bin/npx-cli.js');
               const ANDROID_SH = fs.existsSync('/system/bin/sh') ? '/system/bin/sh' : '/bin/sh';
+
+              process.on('uncaughtException', (err) => {
+                try { console.error("[NODE_ERROR] Uncaught exception:", err); } catch (_) {}
+              });
+              process.on('unhandledRejection', (reason) => {
+                try { console.error("[NODE_ERROR] Unhandled rejection:", reason); } catch (_) {}
+              });
 
               function getPathFromEnvPairs(envPairs) {
                 if (Array.isArray(envPairs)) {
@@ -444,13 +454,13 @@ object NodeNativeBootstrap {
 
                 const base = path.basename(rawCmd);
                 if (base === 'node' || base === 'nodejs') {
-                  return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}"${'$'}{tail}`;
+                  return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" --require "${'$'}{SHIM_FILE}"${'$'}{tail}`;
                 }
                 if (base === 'npm') {
-                  return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{NPM_CLI_JS}"${'$'}{tail}`;
+                  return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" --require "${'$'}{SHIM_FILE}" "${'$'}{NPM_CLI_JS}"${'$'}{tail}`;
                 }
                 if (base === 'npx') {
-                  return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{NPX_CLI_JS}"${'$'}{tail}`;
+                  return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" --require "${'$'}{SHIM_FILE}" "${'$'}{NPX_CLI_JS}"${'$'}{tail}`;
                 }
                 if (base === 'react-scripts') {
                   let startScript = path.resolve(cwd, 'node_modules/react-scripts/scripts/start.js');
@@ -468,7 +478,7 @@ object NodeNativeBootstrap {
                   }
 
                   if (tail.includes('start') && fs.existsSync(startScript)) {
-                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{startScript}"`;
+                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" --require "${'$'}{SHIM_FILE}" "${'$'}{startScript}"`;
                   }
 
                   let binScript = path.resolve(cwd, 'node_modules/react-scripts/bin/react-scripts.js');
@@ -485,7 +495,7 @@ object NodeNativeBootstrap {
                     } catch (_) {}
                   }
                   if (fs.existsSync(binScript)) {
-                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{binScript}"${'$'}{tail}`;
+                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" --require "${'$'}{SHIM_FILE}" "${'$'}{binScript}"${'$'}{tail}`;
                   }
                 }
                 if (rawCmd === '/bin/sh' || rawCmd === '/usr/bin/sh' || rawCmd === '/bin/bash' || rawCmd === '/usr/bin/bash') {
@@ -547,20 +557,24 @@ object NodeNativeBootstrap {
 
                 if (base === 'node' || base === 'nodejs') {
                   options.file = NODE_EXEC;
-                  origArgs[0] = NODE_EXEC;
-                  options.args = origArgs;
+                  const newArgs = [NODE_EXEC];
+                  if (!origArgs.includes('--require')) {
+                    newArgs.push('--require', SHIM_FILE);
+                  }
+                  newArgs.push(...origArgs.slice(1));
+                  options.args = newArgs;
                   return options;
                 }
 
                 if (base === 'npm') {
                   options.file = NODE_EXEC;
-                  options.args = [NODE_EXEC, NPM_CLI_JS, ...origArgs.slice(1)];
+                  options.args = [NODE_EXEC, '--require', SHIM_FILE, NPM_CLI_JS, ...origArgs.slice(1)];
                   return options;
                 }
 
                 if (base === 'npx') {
                   options.file = NODE_EXEC;
-                  options.args = [NODE_EXEC, NPX_CLI_JS, ...origArgs.slice(1)];
+                  options.args = [NODE_EXEC, '--require', SHIM_FILE, NPX_CLI_JS, ...origArgs.slice(1)];
                   return options;
                 }
 
@@ -582,7 +596,9 @@ object NodeNativeBootstrap {
                   const isStart = origArgs.some(a => typeof a === 'string' && a.includes('start'));
                   if (isStart && fs.existsSync(startScript)) {
                     options.file = NODE_EXEC;
-                    options.args = [NODE_EXEC, startScript];
+                    options.args = [NODE_EXEC, '--require', SHIM_FILE, startScript];
+                    return options;
+                  }
                     return options;
                   }
 
@@ -738,9 +754,29 @@ object NodeNativeBootstrap {
         val bin = match.groupValues[1]
         val rest = match.groupValues[2]
 
+        val shim = getAndroidShimFile(context).absolutePath
+
         return when (bin) {
-            "node", "nodejs" -> "\"$launcher\"$rest"
-            "npm" -> "\"$launcher\" \"$npmCli\"$rest"
+            "node", "nodejs" -> "\"$launcher\" --require \"$shim\"$rest"
+            "npm" -> {
+                val subCmd = rest.trim()
+                if (subCmd == "start" || subCmd == "run start" || subCmd.startsWith("start ") || subCmd.startsWith("run start ")) {
+                    val inCurrent = workingDir?.let { File(it, "node_modules/react-scripts/scripts/start.js") }
+                    val inSub = if (inCurrent?.exists() != true) {
+                        workingDir?.listFiles()?.firstOrNull { f ->
+                            f.isDirectory && File(f, "node_modules/react-scripts/scripts/start.js").exists()
+                        }?.let { File(it, "node_modules/react-scripts/scripts/start.js") }
+                    } else null
+                    val startScript = inCurrent?.takeIf { it.exists() } ?: inSub?.takeIf { it.exists() }
+                    if (startScript != null && startScript.exists()) {
+                        "\"$launcher\" --require \"$shim\" \"${startScript.absolutePath}\""
+                    } else {
+                        "\"$launcher\" \"$npmCli\"$rest"
+                    }
+                } else {
+                    "\"$launcher\" \"$npmCli\"$rest"
+                }
+            }
             "npx" -> "\"$launcher\" \"$npxCli\" --yes$rest"
             "create-react-app" -> "\"$launcher\" \"$npxCli\" --yes create-react-app$rest"
             "react-scripts" -> {
@@ -757,7 +793,7 @@ object NodeNativeBootstrap {
                     ?: inSub?.takeIf { it.exists() }
                     ?: File(workingDir ?: File("."), "node_modules/react-scripts/$targetName")
 
-                "\"$launcher\" \"${scriptFile.absolutePath}\"$rest"
+                "\"$launcher\" --require \"$shim\" \"${scriptFile.absolutePath}\"$rest"
             }
             else -> cmdLine
         }

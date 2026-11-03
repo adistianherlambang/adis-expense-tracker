@@ -208,9 +208,31 @@ object DevServerManager {
                 val parts = requestLine.split(" ")
                 if (parts.size < 2) return
 
+                val serverInfo = _activeServers.value.find { it.port == port }
+                val isTestServer = serverInfo?.name == "Test Server"
+
                 val method = parts[0]
                 val rawPath = parts[1].substringBefore('?').substringBefore('#')
                 val path = if (rawPath == "/" || rawPath.isBlank()) "/index.html" else rawPath
+
+                if (isTestServer && (path == "/index.html" || path == "/")) {
+                    val html = generateTestPage(rootDir, port)
+                    val bytes = html.toByteArray(Charsets.UTF_8)
+                    val header = buildString {
+                        append("HTTP/1.1 200 OK\r\n")
+                        append("Content-Type: text/html; charset=utf-8\r\n")
+                        append("Content-Length: ${bytes.size}\r\n")
+                        append("Access-Control-Allow-Origin: *\r\n")
+                        append("Connection: close\r\n")
+                        append("\r\n")
+                    }
+                    output.write(header.toByteArray(Charsets.UTF_8))
+                    if (method != "HEAD") {
+                        output.write(bytes)
+                    }
+                    output.flush()
+                    return@use
+                }
 
                 var targetFile = File(rootDir, path.removePrefix("/"))
                 if (!targetFile.exists() || targetFile.isDirectory) {
@@ -218,25 +240,36 @@ object DevServerManager {
                     if (htmlCandidate.exists() && htmlCandidate.isFile) {
                         targetFile = htmlCandidate
                     } else if (targetFile.isDirectory && File(targetFile, "index.html").exists()) {
-                        targetFile = File(targetFile, "index.html")
+                        val subIndex = File(targetFile, "index.html")
+                        val text = try { subIndex.readText(Charsets.UTF_8) } catch (_: Exception) { "" }
+                        if (!text.contains("%PUBLIC_URL%")) {
+                            targetFile = subIndex
+                        }
                     } else {
-                        // Project structure fallbacks
+                        // Project structure fallbacks (only compiled bundles or valid HTML)
                         val projectIndexCandidates = listOf(
                             File(rootDir, "index.html"),
-                            File(rootDir, "public/index.html"),
-                            File(rootDir, "1/public/index.html"),
-                            File(rootDir, "1/build/index.html"),
                             File(rootDir, "build/index.html"),
-                            File(rootDir, "dist/index.html")
+                            File(rootDir, "dist/index.html"),
+                            File(rootDir, "1/build/index.html"),
+                            File(rootDir, "1/dist/index.html"),
+                            File(rootDir, "2/build/index.html"),
+                            File(rootDir, "2/dist/index.html")
                         )
-                        val foundIndex = projectIndexCandidates.firstOrNull { it.exists() && it.isFile }
+                        val foundIndex = projectIndexCandidates.firstOrNull { 
+                            it.exists() && it.isFile && !it.readText(Charsets.UTF_8).contains("%PUBLIC_URL%") 
+                        }
                         if (foundIndex != null && (path == "/index.html" || !path.contains('.'))) {
                             targetFile = foundIndex
                         }
                     }
                 }
 
-                if (targetFile.exists() && targetFile.isFile) {
+                val isUncompiledTemplate = targetFile.exists() && targetFile.isFile && 
+                    targetFile.name == "index.html" && 
+                    try { targetFile.readText(Charsets.UTF_8).contains("%PUBLIC_URL%") } catch (_: Exception) { false }
+
+                if (targetFile.exists() && targetFile.isFile && !isUncompiledTemplate) {
                     val mime = getMimeType(targetFile.name)
                     val bytes = targetFile.readBytes()
 
@@ -254,7 +287,7 @@ object DevServerManager {
                     }
                     output.flush()
                 } else {
-                    // Serve friendly interactive directory listing & port status instead of a dull 404
+                    // Serve friendly interactive directory listing & port status instead of a dull 404 or blank page
                     val html = generateDirectoryListing(rootDir, rawPath, port)
                     val bytes = html.toByteArray(Charsets.UTF_8)
                     val header = buildString {
@@ -332,6 +365,45 @@ object DevServerManager {
                     append("      <a class=\"file-item\" href=\"/$itemRel\"><span class=\"file-info\">$icon ${f.name}</span><span class=\"file-size\">$sizeText</span></a>\n")
                 }
             }
+            append("    </div>\n")
+            append("  </div>\n")
+            append("</body>\n")
+            append("</html>\n")
+        }
+    }
+
+    private fun generateTestPage(rootDir: File, port: Int): String {
+        return buildString {
+            append("<!DOCTYPE html>\n")
+            append("<html lang=\"en\">\n")
+            append("<head>\n")
+            append("  <meta charset=\"utf-8\">\n")
+            append("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+            append("  <title>Mobile Code Port Test :$port</title>\n")
+            append("  <style>\n")
+            append("    * { box-sizing: border-box; }\n")
+            append("    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 24px; display: flex; align-items: center; justify-content: center; min-height: 100vh; }\n")
+            append("    .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 32px; max-width: 520px; width: 100%; box-shadow: 0 20px 40px rgba(0,0,0,0.5); text-align: center; }\n")
+            append("    .badge { display: inline-flex; align-items: center; gap: 8px; background: #064e3b; color: #34d399; border: 1px solid #059669; padding: 6px 16px; border-radius: 9999px; font-size: 13px; font-weight: 700; margin-bottom: 20px; }\n")
+            append("    .dot { width: 10px; height: 10px; background: #34d399; border-radius: 50%; box-shadow: 0 0 10px #34d399; }\n")
+            append("    h1 { font-size: 24px; margin: 0 0 12px 0; color: #ffffff; }\n")
+            append("    p { font-size: 14px; color: #94a3b8; line-height: 1.6; margin: 0 0 24px 0; }\n")
+            append("    .info-box { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 16px; text-align: left; font-family: monospace; font-size: 13px; color: #38bdf8; margin-bottom: 20px; }\n")
+            append("    .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }\n")
+            append("    .info-row:last-child { margin-bottom: 0; }\n")
+            append("    .info-label { color: #64748b; }\n")
+            append("  </style>\n")
+            append("</head>\n")
+            append("<body>\n")
+            append("  <div class=\"card\">\n")
+            append("    <div class=\"badge\"><span class=\"dot\"></span> 🟢 PORT $port TEST PASSED</div>\n")
+            append("    <h1>Mobile Code Port Test OK</h1>\n")
+            append("    <p>Port $port is successfully bound and actively responding to HTTP requests on Android.</p>\n")
+            append("    <div class=\"info-box\">\n")
+            append("      <div class=\"info-row\"><span class=\"info-label\">Port:</span><span>$port</span></div>\n")
+            append("      <div class=\"info-row\"><span class=\"info-label\">Status:</span><span>ONLINE (200 OK)</span></div>\n")
+            append("      <div class=\"info-row\"><span class=\"info-label\">Interface:</span><span>127.0.0.1 (Loopback)</span></div>\n")
+            append("      <div class=\"info-row\"><span class=\"info-label\">Working Dir:</span><span>${rootDir.name}</span></div>\n")
             append("    </div>\n")
             append("  </div>\n")
             append("</body>\n")

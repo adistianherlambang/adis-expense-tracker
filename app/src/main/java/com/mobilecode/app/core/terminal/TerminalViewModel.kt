@@ -605,11 +605,15 @@ class TerminalViewModel(
             val effectiveWorkDir = when {
                 File(canonicalWorkDir, "package.json").exists() -> canonicalWorkDir
                 File(canonicalWorkDir, "1/package.json").exists() -> File(canonicalWorkDir, "1").canonicalFile
+                File(canonicalWorkDir, "2/package.json").exists() -> File(canonicalWorkDir, "2").canonicalFile
                 else -> canonicalWorkDir.listFiles()?.firstOrNull { 
                     it.isDirectory && File(it, "package.json").exists() 
                 }?.canonicalFile ?: canonicalWorkDir
             }
             val effectiveCmd = NodeNativeBootstrap.rewriteCommandForAndroid(context, cmdLine, effectiveWorkDir)
+            if (effectiveCmd.contains("start.js")) {
+                session.append("Starting development server in ${effectiveWorkDir.name} (http://127.0.0.1:3000) ...\n")
+            }
 
             val pb = ProcessBuilder("/system/bin/sh", "-c", effectiveCmd)
             pb.directory(effectiveWorkDir)
