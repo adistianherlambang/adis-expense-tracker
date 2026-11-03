@@ -59,7 +59,7 @@ fun TitleBar(
                 modifier = Modifier.size(18.dp)
             )
             Text(
-                text = "Mobile Code v2.5.6",
+                text = "Mobile Code v2.5.7",
                 modifier = Modifier,
                 color = VsCodeTheme.Foreground,
                 fontSize = 12.sp,

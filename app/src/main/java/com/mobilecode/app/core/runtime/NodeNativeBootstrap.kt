@@ -19,7 +19,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION = 6
+    private const val BOOTSTRAP_VERSION = 7
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -277,27 +277,26 @@ object NodeNativeBootstrap {
                 }
               };
 
-              // 3. Module require interceptor: bypass detect-port-alt network scanning & am-based browser opener
+              // 3. Module require interceptors for CRA / Webpack Dev Server
               const origRequire = mod.prototype.require;
               mod.prototype.require = function(id) {
                 if (id === 'detect-port-alt' || id === 'detect-port') {
-                  const net = require('net');
-                  return function detectPort(defaultPort, host) {
-                    return new Promise((resolve) => {
-                      const port = parseInt(defaultPort, 10) || 3000;
-                      const server = net.createServer();
-                      server.unref();
-                      server.on('error', () => {
-                        resolve(port + 1);
-                      });
-                      server.listen(port, '127.0.0.1', () => {
-                        server.close(() => {
-                          resolve(port);
-                        });
-                      });
-                    });
+                  const fn = function detectPort(defaultPort, host, callback) {
+                    const p = parseInt(defaultPort, 10) || 3000;
+                    if (typeof host === 'function') {
+                      host(null, p);
+                      return Promise.resolve(p);
+                    }
+                    if (typeof callback === 'function') {
+                      callback(null, p);
+                    }
+                    return Promise.resolve(p);
                   };
+                  fn.detect = fn;
+                  fn.default = fn;
+                  return fn;
                 }
+
                 if (id === 'react-dev-utils/openBrowser') {
                   return function openBrowser(url) {
                     if (!url) return false;
@@ -312,6 +311,16 @@ object NodeNativeBootstrap {
                     }
                   };
                 }
+
+                if (id.endsWith('/WebpackDevServerUtils') || id === 'react-dev-utils/WebpackDevServerUtils') {
+                  const origUtils = origRequire.apply(this, arguments);
+                  return Object.assign({}, origUtils, {
+                    choosePort: function(host, defaultPort) {
+                      return Promise.resolve(parseInt(defaultPort, 10) || 3000);
+                    }
+                  });
+                }
+
                 return origRequire.apply(this, arguments);
               };
 
@@ -409,9 +418,39 @@ object NodeNativeBootstrap {
                   return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{NPX_CLI_JS}"${'$'}{tail}`;
                 }
                 if (base === 'react-scripts') {
-                  const localReactScripts = path.resolve(cwd, 'node_modules/react-scripts/bin/react-scripts.js');
-                  if (fs.existsSync(localReactScripts)) {
-                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{localReactScripts}"${'$'}{tail}`;
+                  let startScript = path.resolve(cwd, 'node_modules/react-scripts/scripts/start.js');
+                  if (!fs.existsSync(startScript)) {
+                    try {
+                      const files = fs.readdirSync(cwd);
+                      for (let i = 0; i < files.length; i++) {
+                        const cand = path.resolve(cwd, files[i], 'node_modules/react-scripts/scripts/start.js');
+                        if (fs.existsSync(cand)) {
+                          startScript = cand;
+                          break;
+                        }
+                      }
+                    } catch (_) {}
+                  }
+
+                  if (tail.includes('start') && fs.existsSync(startScript)) {
+                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{startScript}"`;
+                  }
+
+                  let binScript = path.resolve(cwd, 'node_modules/react-scripts/bin/react-scripts.js');
+                  if (!fs.existsSync(binScript)) {
+                    try {
+                      const files = fs.readdirSync(cwd);
+                      for (let i = 0; i < files.length; i++) {
+                        const cand = path.resolve(cwd, files[i], 'node_modules/react-scripts/bin/react-scripts.js');
+                        if (fs.existsSync(cand)) {
+                          binScript = cand;
+                          break;
+                        }
+                      }
+                    } catch (_) {}
+                  }
+                  if (fs.existsSync(binScript)) {
+                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{binScript}"${'$'}{tail}`;
                   }
                 }
                 if (rawCmd === '/bin/sh' || rawCmd === '/usr/bin/sh' || rawCmd === '/bin/bash' || rawCmd === '/usr/bin/bash') {
@@ -491,10 +530,43 @@ object NodeNativeBootstrap {
                 }
 
                 if (base === 'react-scripts') {
-                  const localReactScripts = path.resolve(cwd, 'node_modules/react-scripts/bin/react-scripts.js');
-                  if (fs.existsSync(localReactScripts)) {
+                  let startScript = path.resolve(cwd, 'node_modules/react-scripts/scripts/start.js');
+                  if (!fs.existsSync(startScript)) {
+                    try {
+                      const files = fs.readdirSync(cwd);
+                      for (let i = 0; i < files.length; i++) {
+                        const cand = path.resolve(cwd, files[i], 'node_modules/react-scripts/scripts/start.js');
+                        if (fs.existsSync(cand)) {
+                          startScript = cand;
+                          break;
+                        }
+                      }
+                    } catch (_) {}
+                  }
+
+                  const isStart = origArgs.some(a => typeof a === 'string' && a.includes('start'));
+                  if (isStart && fs.existsSync(startScript)) {
                     options.file = NODE_EXEC;
-                    options.args = [NODE_EXEC, localReactScripts, ...origArgs.slice(1)];
+                    options.args = [NODE_EXEC, startScript];
+                    return options;
+                  }
+
+                  let binScript = path.resolve(cwd, 'node_modules/react-scripts/bin/react-scripts.js');
+                  if (!fs.existsSync(binScript)) {
+                    try {
+                      const files = fs.readdirSync(cwd);
+                      for (let i = 0; i < files.length; i++) {
+                        const cand = path.resolve(cwd, files[i], 'node_modules/react-scripts/bin/react-scripts.js');
+                        if (fs.existsSync(cand)) {
+                          binScript = cand;
+                          break;
+                        }
+                      }
+                    } catch (_) {}
+                  }
+                  if (fs.existsSync(binScript)) {
+                    options.file = NODE_EXEC;
+                    options.args = [NODE_EXEC, binScript, ...origArgs.slice(1)];
                     return options;
                   }
                 }
@@ -561,7 +633,11 @@ object NodeNativeBootstrap {
               const origSpawnSync = cp.spawnSync;
               cp.spawnSync = function(file, args, options) {
                 const norm = normalizeSyncCall(file, args, options);
-                return origSpawnSync.call(this, norm.file, norm.args, norm.options);
+                const res = origSpawnSync.call(this, norm.file, norm.args, norm.options);
+                if (res && res.error) {
+                  try { process.stderr.write(String(res.error) + '\n'); } catch (_) {}
+                }
+                return res;
               };
 
               const origExecFileSync = cp.execFileSync;
@@ -616,7 +692,7 @@ object NodeNativeBootstrap {
      * so they directly execute the ELF binary in nativeLibraryDir without triggering SELinux
      * app_data_file script execve blocks on Android 10+.
      */
-    fun rewriteCommandForAndroid(context: Context, cmdLine: String): String {
+    fun rewriteCommandForAndroid(context: Context, cmdLine: String, workingDir: File? = null): String {
         val trimmed = cmdLine.trim()
         if (trimmed.isEmpty()) return cmdLine
         val launcher = getNativeNodeLauncher(context).absolutePath
@@ -632,7 +708,22 @@ object NodeNativeBootstrap {
             "npm" -> "\"$launcher\" \"$npmCli\"$rest"
             "npx" -> "\"$launcher\" \"$npxCli\" --yes$rest"
             "create-react-app" -> "\"$launcher\" \"$npxCli\" --yes create-react-app$rest"
-            "react-scripts" -> "\"$launcher\" ./node_modules/react-scripts/bin/react-scripts.js$rest"
+            "react-scripts" -> {
+                val isStart = rest.contains("start")
+                val targetName = if (isStart) "scripts/start.js" else "bin/react-scripts.js"
+                val inCurrent = workingDir?.let { File(it, "node_modules/react-scripts/$targetName") }
+                val inSub = if (inCurrent?.exists() != true) {
+                    workingDir?.listFiles()?.firstOrNull { f ->
+                        f.isDirectory && File(f, "node_modules/react-scripts/$targetName").exists()
+                    }?.let { File(it, "node_modules/react-scripts/$targetName") }
+                } else null
+
+                val scriptFile = inCurrent?.takeIf { it.exists() }
+                    ?: inSub?.takeIf { it.exists() }
+                    ?: File(workingDir ?: File("."), "node_modules/react-scripts/$targetName")
+
+                "\"$launcher\" \"${scriptFile.absolutePath}\"$rest"
+            }
             else -> cmdLine
         }
     }

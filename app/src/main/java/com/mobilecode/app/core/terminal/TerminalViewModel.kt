@@ -551,7 +551,7 @@ class TerminalViewModel(
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val currentPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
             val canonicalWorkDir = session.workingDir.canonicalFile.apply { if (!exists()) mkdirs() }
-            val effectiveCmd = NodeNativeBootstrap.rewriteCommandForAndroid(context, cmdLine)
+            val effectiveCmd = NodeNativeBootstrap.rewriteCommandForAndroid(context, cmdLine, canonicalWorkDir)
 
             val pb = ProcessBuilder("/system/bin/sh", "-c", effectiveCmd)
             pb.directory(canonicalWorkDir)
