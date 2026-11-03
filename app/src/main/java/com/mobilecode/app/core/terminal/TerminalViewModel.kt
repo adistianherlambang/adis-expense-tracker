@@ -11,6 +11,8 @@ import com.mobilecode.app.core.runtime.NodeNativeBootstrap
 import com.mobilecode.app.core.runtime.NodeRuntimeEngine
 import com.mobilecode.app.core.runtime.PythonRuntimeEngine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -534,6 +536,7 @@ class TerminalViewModel(
     }
 
     private suspend fun executeNativeProcess(session: TerminalSession, cmdLine: String) = withContext(Dispatchers.IO) {
+        var portScanJob: Job? = null
         try {
             val context = workspaceManager.appContext
             NodeNativeBootstrap.ensureInitialized(context) { progress ->
@@ -553,7 +556,9 @@ class TerminalViewModel(
             val pb = ProcessBuilder("/system/bin/sh", "-c", effectiveCmd)
             pb.directory(canonicalWorkDir)
             val env = pb.environment()
-            env["PATH"] = "${usrBin.absolutePath}:$currentPath"
+            val localBin = File(canonicalWorkDir, "node_modules/.bin")
+            val localBinPath = if (localBin.exists()) "${localBin.absolutePath}:" else ""
+            env["PATH"] = "$localBinPath${usrBin.absolutePath}:$currentPath"
             env["LD_LIBRARY_PATH"] = "$nativeLibDir:${env["LD_LIBRARY_PATH"] ?: ""}"
             env["NODE_PATH"] = File(usrDir, "lib/node_modules").absolutePath + ":" + File(canonicalWorkDir, "node_modules").absolutePath
             env["NODE_OPTIONS"] = "--require ${shimFile.absolutePath}"
@@ -580,13 +585,15 @@ class TerminalViewModel(
 
             // Dev server environment variables to prevent hanging on browser open or port prompts
             env["BROWSER"] = "none"
-            env["CI"] = "false"
+            env["CI"] = "true"
             env["PORT"] = "3000"
             env["HOST"] = "0.0.0.0"
             env["WDS_SOCKET_PORT"] = "0"
             env["WATCHPACK_POLLING"] = "true"
             env["CHOKIDAR_USEPOLLING"] = "true"
             env["FAST_REFRESH"] = "true"
+            env["DANGEROUSLY_DISABLE_HOST_CHECK"] = "true"
+            env["MOBILE_CODE_DEV_SERVER"] = "true"
 
             // If an internal static server was holding port 3000, free it for the dev server
             if (DevServerManager.isPortRunning(3000)) {
@@ -598,8 +605,14 @@ class TerminalViewModel(
             session.runningProcess = proc
             session.isProcessRunning.value = true
 
-            // Trigger background port scanner so when Webpack/Vite opens a port, it's discovered
+            // Trigger immediate scan and recurring background port scanner so when Webpack/Vite opens a port, it's discovered
             DevServerManager.scanActivePorts(session.workingDir)
+            portScanJob = viewModelScope.launch(Dispatchers.IO) {
+                while (session.isProcessRunning.value) {
+                    delay(1500)
+                    DevServerManager.scanActivePorts(session.workingDir)
+                }
+            }
 
             val stream = proc.inputStream
             val buffer = ByteArray(1024)
@@ -612,6 +625,7 @@ class TerminalViewModel(
         } catch (e: Exception) {
             session.append("sh: ${e.message}\n")
         } finally {
+            portScanJob?.cancel()
             session.runningProcess = null
             session.isProcessRunning.value = false
             DevServerManager.scanActivePorts(session.workingDir)

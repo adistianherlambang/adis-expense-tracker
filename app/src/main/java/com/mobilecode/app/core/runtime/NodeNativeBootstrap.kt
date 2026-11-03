@@ -19,7 +19,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION = 5
+    private const val BOOTSTRAP_VERSION = 6
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -247,6 +247,74 @@ object NodeNativeBootstrap {
               };
 
               const NODE_EXEC = process.env.MOBILE_CODE_NODE_LAUNCHER || process.execPath;
+              try {
+                Object.defineProperty(process, 'execPath', {
+                  value: NODE_EXEC,
+                  writable: true,
+                  configurable: true,
+                  enumerable: true
+                });
+              } catch (e) {
+                try { process.execPath = NODE_EXEC; } catch (_) {}
+              }
+
+              // 2. Prevent stdin EOF from terminating dev servers (e.g. react-scripts start.js line 149)
+              const origStdinOn = process.stdin.on;
+              process.stdin.on = function(event, listener) {
+                if (event === 'end') {
+                  return this;
+                }
+                return origStdinOn.apply(this, arguments);
+              };
+              process.stdin.addListener = process.stdin.on;
+
+              const origStdinResume = process.stdin.resume;
+              process.stdin.resume = function() {
+                try {
+                  return origStdinResume.apply(this, arguments);
+                } catch (e) {
+                  return this;
+                }
+              };
+
+              // 3. Module require interceptor: bypass detect-port-alt network scanning & am-based browser opener
+              const origRequire = mod.prototype.require;
+              mod.prototype.require = function(id) {
+                if (id === 'detect-port-alt' || id === 'detect-port') {
+                  const net = require('net');
+                  return function detectPort(defaultPort, host) {
+                    return new Promise((resolve) => {
+                      const port = parseInt(defaultPort, 10) || 3000;
+                      const server = net.createServer();
+                      server.unref();
+                      server.on('error', () => {
+                        resolve(port + 1);
+                      });
+                      server.listen(port, '127.0.0.1', () => {
+                        server.close(() => {
+                          resolve(port);
+                        });
+                      });
+                    });
+                  };
+                }
+                if (id === 'react-dev-utils/openBrowser') {
+                  return function openBrowser(url) {
+                    if (!url) return false;
+                    try {
+                      cp.spawn('/system/bin/am', ['start', '-a', 'android.intent.action.VIEW', '-d', url], {
+                        detached: true,
+                        stdio: 'ignore'
+                      });
+                      return true;
+                    } catch (e) {
+                      return false;
+                    }
+                  };
+                }
+                return origRequire.apply(this, arguments);
+              };
+
               const USR_DIR = process.env.MOBILE_CODE_USR_DIR || path.resolve(process.env.HOME || '/', '../usr');
               const NPM_CLI_JS = process.env.MOBILE_CODE_NPM_CLI || path.join(USR_DIR, 'lib/node_modules/npm/bin/npm-cli.js');
               const NPX_CLI_JS = process.env.MOBILE_CODE_NPX_CLI || path.join(USR_DIR, 'lib/node_modules/npm/bin/npx-cli.js');
@@ -340,6 +408,12 @@ object NodeNativeBootstrap {
                 if (base === 'npx') {
                   return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{NPX_CLI_JS}"${'$'}{tail}`;
                 }
+                if (base === 'react-scripts') {
+                  const localReactScripts = path.resolve(cwd, 'node_modules/react-scripts/bin/react-scripts.js');
+                  if (fs.existsSync(localReactScripts)) {
+                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{localReactScripts}"${'$'}{tail}`;
+                  }
+                }
                 if (rawCmd === '/bin/sh' || rawCmd === '/usr/bin/sh' || rawCmd === '/bin/bash' || rawCmd === '/usr/bin/bash') {
                   return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{ANDROID_SH}"${'$'}{tail}`;
                 }
@@ -383,6 +457,20 @@ object NodeNativeBootstrap {
                   return options;
                 }
 
+                if (
+                  rawFile === NODE_EXEC ||
+                  rawFile.endsWith('/app_process64') ||
+                  rawFile.endsWith('/app_process32') ||
+                  rawFile.endsWith('/app_process') ||
+                  rawFile.endsWith('libnode_launcher.so') ||
+                  rawFile === 'libnode_launcher.so'
+                ) {
+                  options.file = NODE_EXEC;
+                  origArgs[0] = NODE_EXEC;
+                  options.args = origArgs;
+                  return options;
+                }
+
                 if (base === 'node' || base === 'nodejs') {
                   options.file = NODE_EXEC;
                   origArgs[0] = NODE_EXEC;
@@ -400,6 +488,15 @@ object NodeNativeBootstrap {
                   options.file = NODE_EXEC;
                   options.args = [NODE_EXEC, NPX_CLI_JS, ...origArgs.slice(1)];
                   return options;
+                }
+
+                if (base === 'react-scripts') {
+                  const localReactScripts = path.resolve(cwd, 'node_modules/react-scripts/bin/react-scripts.js');
+                  if (fs.existsSync(localReactScripts)) {
+                    options.file = NODE_EXEC;
+                    options.args = [NODE_EXEC, localReactScripts, ...origArgs.slice(1)];
+                    return options;
+                  }
                 }
 
                 const resolved = resolveInPath(rawFile, pathEnv, cwd);
@@ -535,6 +632,7 @@ object NodeNativeBootstrap {
             "npm" -> "\"$launcher\" \"$npmCli\"$rest"
             "npx" -> "\"$launcher\" \"$npxCli\" --yes$rest"
             "create-react-app" -> "\"$launcher\" \"$npxCli\" --yes create-react-app$rest"
+            "react-scripts" -> "\"$launcher\" ./node_modules/react-scripts/bin/react-scripts.js$rest"
             else -> cmdLine
         }
     }
