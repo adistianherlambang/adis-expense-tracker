@@ -138,6 +138,11 @@ class WorkspaceManager(private val context: Context) {
         prefs.edit().remove(KEY_LAST_WORKSPACE_PATH).apply()
     }
 
+    fun clearWorkspaceState() {
+        _currentWorkspaceDir.value = null
+        _fileTree.value = emptyList()
+    }
+
     fun refreshTreeSync() {
         val root = _currentWorkspaceDir.value
         if (root == null || !root.exists() || !isInsideSandbox(root)) {

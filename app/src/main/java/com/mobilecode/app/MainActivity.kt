@@ -74,15 +74,22 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val app = application as MobileCodeApplication
-        workspaceManager = app.workspaceManager
+        val isNewWindow = intent.getBooleanExtra("IS_NEW_WINDOW", false)
+        workspaceManager = if (isNewWindow) {
+            OutputLogger.logSystem("New window initialized with empty workspace")
+            WorkspaceManager(this).apply {
+                clearWorkspaceState()
+            }
+        } else {
+            val wm = app.workspaceManager
+            val restored = wm.restoreLastWorkspaceSync()
+            if (restored != null) {
+                OutputLogger.logSystem("Restored last workspace on startup: ${restored.absolutePath}")
+            }
+            wm
+        }
         settingsRepository = SettingsRepository(this)
         packageManager = PackageManager(this)
-
-        // Automatically restore last opened workspace upon startup if persisted
-        val restored = workspaceManager.restoreLastWorkspaceSync()
-        if (restored != null) {
-            OutputLogger.logSystem("Restored last workspace on startup: ${restored.absolutePath}")
-        }
 
         // Start background foreground service for terminal persistence
         TerminalForegroundService.startService(this)
@@ -115,6 +122,7 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
             putExtra("WINDOW_ID", System.currentTimeMillis())
+            putExtra("IS_NEW_WINDOW", true)
         }
         startActivity(intent)
         Toast.makeText(this, "Opened New Window (Ctrl+N / Cmd+N)", Toast.LENGTH_SHORT).show()
