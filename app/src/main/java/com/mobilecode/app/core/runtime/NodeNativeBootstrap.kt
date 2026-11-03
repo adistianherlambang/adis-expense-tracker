@@ -17,7 +17,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION = 1
+    private const val BOOTSTRAP_VERSION = 2
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
         val filesDir = context.filesDir
@@ -39,16 +39,24 @@ object NodeNativeBootstrap {
         val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
         val nativeNodeLauncher = File(nativeLibDir, "libnode_launcher.so")
 
-        // 2. Create 'node' wrapper script in $PATH
+        // 2. Create 'node' & 'nodejs' wrapper script in $PATH
         val nodeScript = File(usrBin, "node")
         val nodeScriptContent = """
             #!/system/bin/sh
             export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
+            if [ -z "${'$'}NODE_PATH" ]; then
+                export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
+            fi
             exec "${nativeNodeLauncher.absolutePath}" "$@"
         """.trimIndent() + "\n"
         nodeScript.writeText(nodeScriptContent, Charsets.UTF_8)
         nodeScript.setExecutable(true, false)
         nodeScript.setReadable(true, false)
+
+        val nodejsScript = File(usrBin, "nodejs")
+        nodejsScript.writeText(nodeScriptContent, Charsets.UTF_8)
+        nodejsScript.setExecutable(true, false)
+        nodejsScript.setReadable(true, false)
 
         // 3. Create 'npm' wrapper script in $PATH
         val npmCliJs = File(npmDir, "bin/npm-cli.js")
@@ -59,6 +67,8 @@ object NodeNativeBootstrap {
             export PATH="${'$'}DIR:${'$'}PATH"
             export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
             export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
+            export npm_config_scripts_prepend_node_path=true
+            export npm_config_update_notifier=false
             exec "${nodeScript.absolutePath}" "${npmCliJs.absolutePath}" "$@"
         """.trimIndent() + "\n"
         npmScript.writeText(npmScriptContent, Charsets.UTF_8)
@@ -74,13 +84,44 @@ object NodeNativeBootstrap {
             export PATH="${'$'}DIR:${'$'}PATH"
             export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
             export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
+            export npm_config_scripts_prepend_node_path=true
+            export npm_config_update_notifier=false
             exec "${nodeScript.absolutePath}" "${npxCliJs.absolutePath}" "$@"
         """.trimIndent() + "\n"
         npxScript.writeText(npxScriptContent, Charsets.UTF_8)
         npxScript.setExecutable(true, false)
         npxScript.setReadable(true, false)
 
-        // 5. Extract official NPM distribution tarball from assets
+        // 5. Create 'create-react-app' wrapper script in $PATH
+        val craScript = File(usrBin, "create-react-app")
+        val craScriptContent = """
+            #!/system/bin/sh
+            exec "${npxScript.absolutePath}" create-react-app "$@"
+        """.trimIndent() + "\n"
+        craScript.writeText(craScriptContent, Charsets.UTF_8)
+        craScript.setExecutable(true, false)
+        craScript.setReadable(true, false)
+
+        // 6. Create 'env' helper in $PATH
+        val envScript = File(usrBin, "env")
+        val envScriptContent = """
+            #!/system/bin/sh
+            if [ "${'$'}1" = "node" ]; then
+                shift
+                exec "${nodeScript.absolutePath}" "$@"
+            elif [ -n "${'$'}1" ]; then
+                cmd="${'$'}1"
+                shift
+                exec "${'$'}cmd" "$@"
+            else
+                /system/bin/printenv
+            fi
+        """.trimIndent() + "\n"
+        envScript.writeText(envScriptContent, Charsets.UTF_8)
+        envScript.setExecutable(true, false)
+        envScript.setReadable(true, false)
+
+        // 7. Extract official NPM distribution tarball from assets
         try {
             context.assets.open("npm.tgz").use { assetIn ->
                 extractTgzStream(assetIn, npmDir)
@@ -236,3 +277,4 @@ object NodeNativeBootstrap {
         return result
     }
 }
+

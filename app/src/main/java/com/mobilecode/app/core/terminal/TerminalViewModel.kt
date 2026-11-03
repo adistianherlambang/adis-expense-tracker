@@ -132,6 +132,23 @@ class TerminalViewModel(
     }
 
     fun submitCurrentCommand() {
+        val session = activeSession
+        val runningProc = session?.runningProcess
+        if (session != null && runningProc != null && runningProc.isAlive) {
+            val cmd = _commandInput.value
+            _commandInput.value = ""
+            session.append("$cmd\n")
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    runningProc.outputStream.write("$cmd\n".toByteArray(Charsets.UTF_8))
+                    runningProc.outputStream.flush()
+                } catch (e: Exception) {
+                    session.append("[Input write error: ${e.message}]\n")
+                }
+            }
+            return
+        }
+
         val cmd = _commandInput.value
         _commandInput.value = ""
         if (cmd.isNotBlank()) {
@@ -213,6 +230,13 @@ class TerminalViewModel(
             "\u001b[B" -> navigateHistoryDown()
             "\u0003" -> {
                 val session = activeSession ?: return
+                val proc = session.runningProcess
+                if (proc != null && proc.isAlive) {
+                    session.killRunningProcess()
+                    _commandInput.value = ""
+                    session.append("^C\n[Process terminated]\n")
+                    return
+                }
                 if (session.replMode != "SH") {
                     session.replMode = "SH"
                     session.append("^C\n[Exited REPL]\n")
@@ -359,7 +383,12 @@ class TerminalViewModel(
             "node", "nodejs", "npm", "npx", "create-react-app" -> {
                 val context = workspaceManager.appContext
                 if (NodeNativeBootstrap.isNativeNodeAvailable(context)) {
-                    executeNativeProcess(session, cmdLine)
+                    val finalCmd = if ((binary == "node" || binary == "nodejs") && args.isEmpty()) {
+                        "node -i"
+                    } else {
+                        cmdLine
+                    }
+                    executeNativeProcess(session, finalCmd)
                 } else {
                     if (binary == "node" || binary == "nodejs") {
                         if (args.isEmpty()) {
@@ -368,9 +397,6 @@ class TerminalViewModel(
                         } else {
                             nodeEngine.executeNodeCommand(args, session.workingDir) { session.append(it) }
                         }
-                    } else if (binary == "create-react-app") {
-                        val appName = args.firstOrNull { !it.startsWith("-") } ?: "my-react-app"
-                        nodeEngine.executeNpmCommand(listOf("create-react-app", appName), session.workingDir) { session.append(it) }
                     } else {
                         nodeEngine.executeNpmCommand(args, session.workingDir) { session.append(it) }
                     }
@@ -534,22 +560,33 @@ class TerminalViewModel(
             env["PATH"] = "${usrBin.absolutePath}:$currentPath"
             env["LD_LIBRARY_PATH"] = "$nativeLibDir:${env["LD_LIBRARY_PATH"] ?: ""}"
             env["NODE_PATH"] = File(context.filesDir, "usr/lib/node_modules").absolutePath + ":" + File(session.workingDir, "node_modules").absolutePath
-            env["HOME"] = session.workingDir.absolutePath
+            val homeDir = File(context.filesDir, "home").apply { if (!exists()) mkdirs() }
+            env["HOME"] = homeDir.absolutePath
+            val tmpDir = File(context.cacheDir, "tmp").apply { if (!exists()) mkdirs() }
+            env["TMPDIR"] = tmpDir.absolutePath
+            env["TEMP"] = tmpDir.absolutePath
+            env["TMP"] = tmpDir.absolutePath
             env["SANDBOX_ROOT"] = workspaceManager.getSandboxRoot().absolutePath
-            env["TMPDIR"] = workspaceManager.getSandboxTmpDirectory().absolutePath
             env["TERM"] = "xterm-256color"
+            env["npm_config_scripts_prepend_node_path"] = "true"
+            env["npm_config_update_notifier"] = "false"
 
             pb.redirectErrorStream(true)
             val proc = pb.start()
+            session.runningProcess = proc
 
-            val reader = proc.inputStream.bufferedReader(Charsets.UTF_8)
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                session.append("$line\n")
+            val stream = proc.inputStream
+            val buffer = ByteArray(1024)
+            var bytesRead: Int
+            while (stream.read(buffer).also { bytesRead = it } != -1) {
+                val text = String(buffer, 0, bytesRead, Charsets.UTF_8)
+                session.append(text)
             }
             proc.waitFor()
         } catch (e: Exception) {
             session.append("sh: ${e.message}\n")
+        } finally {
+            session.runningProcess = null
         }
     }
 

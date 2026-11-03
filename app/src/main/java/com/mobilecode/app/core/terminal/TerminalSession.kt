@@ -11,6 +11,9 @@ class TerminalSession(
     initialWorkingDir: File,
     val isAlive: Boolean = true
 ) {
+    @Volatile
+    var runningProcess: Process? = null
+
     private val buffer = StringBuilder()
 
     private val _outputState = MutableStateFlow("")
@@ -52,6 +55,13 @@ class TerminalSession(
     fun clear() {
         buffer.setLength(0)
         _outputState.value = ""
+    }
+
+    fun killRunningProcess() {
+        try {
+            runningProcess?.destroyForcibly()
+        } catch (_: Exception) {}
+        runningProcess = null
     }
 
     private fun stripAnsiCodes(input: String): String {
