@@ -3,6 +3,8 @@ package com.mobilecode.app.core.runtime
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.File
@@ -17,133 +19,454 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION = 2
+    private const val BOOTSTRAP_VERSION = 3
+    private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
-        val filesDir = context.filesDir
-        val usrDir = File(filesDir, "usr")
-        val usrBin = File(usrDir, "bin")
-        val usrLib = File(usrDir, "lib")
-        val npmDir = File(usrLib, "node_modules/npm")
-        val markerFile = File(usrDir, ".bootstrap_v$BOOTSTRAP_VERSION")
+        initMutex.withLock {
+            val filesDir = context.filesDir.canonicalFile
+            val usrDir = File(filesDir, "usr")
+            val usrBin = File(usrDir, "bin")
+            val usrLib = File(usrDir, "lib")
+            val npmDir = File(usrLib, "node_modules/npm")
+            val shimFile = File(usrLib, "android-shim.js")
+            val markerFile = File(usrDir, ".bootstrap_v$BOOTSTRAP_VERSION")
 
-        if (markerFile.exists() && File(usrBin, "node").exists() && File(npmDir, "bin/npm-cli.js").exists()) {
-            return@withContext
-        }
+            // Always ensure android-shim.js and wrapper scripts are up-to-date
+            usrBin.mkdirs()
+            usrLib.mkdirs()
+            writeAndroidShim(shimFile)
 
-        onProgress?.invoke("Initializing Native Linux Node.js & NPM environment...\n")
-        usrBin.mkdirs()
-        npmDir.mkdirs()
-
-        // 1. Locate native executable compiled into APK native library directory
-        val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
-        val nativeNodeLauncher = File(nativeLibDir, "libnode_launcher.so")
-
-        // 2. Create 'node' & 'nodejs' wrapper script in $PATH
-        val nodeScript = File(usrBin, "node")
-        val nodeScriptContent = """
-            #!/system/bin/sh
-            export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
-            if [ -z "${'$'}NODE_PATH" ]; then
-                export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
-            fi
-            exec "${nativeNodeLauncher.absolutePath}" "$@"
-        """.trimIndent() + "\n"
-        nodeScript.writeText(nodeScriptContent, Charsets.UTF_8)
-        nodeScript.setExecutable(true, false)
-        nodeScript.setReadable(true, false)
-
-        val nodejsScript = File(usrBin, "nodejs")
-        nodejsScript.writeText(nodeScriptContent, Charsets.UTF_8)
-        nodejsScript.setExecutable(true, false)
-        nodejsScript.setReadable(true, false)
-
-        // 3. Create 'npm' wrapper script in $PATH
-        val npmCliJs = File(npmDir, "bin/npm-cli.js")
-        val npmScript = File(usrBin, "npm")
-        val npmScriptContent = """
-            #!/system/bin/sh
-            DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")" && pwd)"
-            export PATH="${'$'}DIR:${'$'}PATH"
-            export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
-            export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
-            export npm_config_scripts_prepend_node_path=true
-            export npm_config_update_notifier=false
-            exec "${nodeScript.absolutePath}" "${npmCliJs.absolutePath}" "$@"
-        """.trimIndent() + "\n"
-        npmScript.writeText(npmScriptContent, Charsets.UTF_8)
-        npmScript.setExecutable(true, false)
-        npmScript.setReadable(true, false)
-
-        // 4. Create 'npx' wrapper script in $PATH
-        val npxCliJs = File(npmDir, "bin/npx-cli.js")
-        val npxScript = File(usrBin, "npx")
-        val npxScriptContent = """
-            #!/system/bin/sh
-            DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")" && pwd)"
-            export PATH="${'$'}DIR:${'$'}PATH"
-            export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
-            export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
-            export npm_config_scripts_prepend_node_path=true
-            export npm_config_update_notifier=false
-            exec "${nodeScript.absolutePath}" "${npxCliJs.absolutePath}" "$@"
-        """.trimIndent() + "\n"
-        npxScript.writeText(npxScriptContent, Charsets.UTF_8)
-        npxScript.setExecutable(true, false)
-        npxScript.setReadable(true, false)
-
-        // 5. Create 'create-react-app' wrapper script in $PATH
-        val craScript = File(usrBin, "create-react-app")
-        val craScriptContent = """
-            #!/system/bin/sh
-            exec "${npxScript.absolutePath}" create-react-app "$@"
-        """.trimIndent() + "\n"
-        craScript.writeText(craScriptContent, Charsets.UTF_8)
-        craScript.setExecutable(true, false)
-        craScript.setReadable(true, false)
-
-        // 6. Create 'env' helper in $PATH
-        val envScript = File(usrBin, "env")
-        val envScriptContent = """
-            #!/system/bin/sh
-            if [ "${'$'}1" = "node" ]; then
-                shift
-                exec "${nodeScript.absolutePath}" "$@"
-            elif [ -n "${'$'}1" ]; then
-                cmd="${'$'}1"
-                shift
-                exec "${'$'}cmd" "$@"
-            else
-                /system/bin/printenv
-            fi
-        """.trimIndent() + "\n"
-        envScript.writeText(envScriptContent, Charsets.UTF_8)
-        envScript.setExecutable(true, false)
-        envScript.setReadable(true, false)
-
-        // 7. Extract official NPM distribution tarball from assets
-        try {
-            context.assets.open("npm.tgz").use { assetIn ->
-                extractTgzStream(assetIn, npmDir)
+            if (markerFile.exists() && File(usrBin, "node").exists() && File(npmDir, "bin/npm-cli.js").exists()) {
+                return@withLock
             }
-            onProgress?.invoke("Official NPM distribution installed to ${npmDir.absolutePath}\n")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to extract npm.tgz from assets", e)
-            onProgress?.invoke("Warning: could not extract bundled npm: ${e.message}\n")
-        }
 
-        // Mark initialization complete
-        markerFile.writeText("OK", Charsets.UTF_8)
-        onProgress?.invoke("Native Linux Node.js environment ready.\n")
+            onProgress?.invoke("Initializing Native Linux Node.js & NPM environment...\n")
+            npmDir.mkdirs()
+
+            // 1. Locate native executable compiled into APK native library directory
+            val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
+            val nativeNodeLauncher = File(nativeLibDir, "libnode_launcher.so")
+
+            // 2. Create 'node' & 'nodejs' wrapper script in $PATH
+            val nodeScript = File(usrBin, "node")
+            val nodeScriptContent = """
+                #!/system/bin/sh
+                export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
+                if [ -z "${'$'}NODE_PATH" ]; then
+                    export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
+                fi
+                exec "${nativeNodeLauncher.absolutePath}" "$@"
+            """.trimIndent() + "\n"
+            nodeScript.writeText(nodeScriptContent, Charsets.UTF_8)
+            nodeScript.setExecutable(true, false)
+            nodeScript.setReadable(true, false)
+
+            val nodejsScript = File(usrBin, "nodejs")
+            nodejsScript.writeText(nodeScriptContent, Charsets.UTF_8)
+            nodejsScript.setExecutable(true, false)
+            nodejsScript.setReadable(true, false)
+
+            // 3. Create 'npm' wrapper script in $PATH
+            val npmCliJs = File(npmDir, "bin/npm-cli.js")
+            val npmScript = File(usrBin, "npm")
+            val npmScriptContent = """
+                #!/system/bin/sh
+                DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")" && pwd)"
+                export PATH="${'$'}DIR:${'$'}PATH"
+                export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
+                export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
+                export npm_config_scripts_prepend_node_path=true
+                export npm_config_update_notifier=false
+                exec "${nativeNodeLauncher.absolutePath}" "${npmCliJs.absolutePath}" "$@"
+            """.trimIndent() + "\n"
+            npmScript.writeText(npmScriptContent, Charsets.UTF_8)
+            npmScript.setExecutable(true, false)
+            npmScript.setReadable(true, false)
+
+            // 4. Create 'npx' wrapper script in $PATH
+            val npxCliJs = File(npmDir, "bin/npx-cli.js")
+            val npxScript = File(usrBin, "npx")
+            val npxScriptContent = """
+                #!/system/bin/sh
+                DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")" && pwd)"
+                export PATH="${'$'}DIR:${'$'}PATH"
+                export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
+                export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
+                export npm_config_scripts_prepend_node_path=true
+                export npm_config_update_notifier=false
+                exec "${nativeNodeLauncher.absolutePath}" "${npxCliJs.absolutePath}" "$@"
+            """.trimIndent() + "\n"
+            npxScript.writeText(npxScriptContent, Charsets.UTF_8)
+            npxScript.setExecutable(true, false)
+            npxScript.setReadable(true, false)
+
+            // 5. Create 'create-react-app' wrapper script in $PATH
+            val craScript = File(usrBin, "create-react-app")
+            val craScriptContent = """
+                #!/system/bin/sh
+                exec "${nativeNodeLauncher.absolutePath}" "${npxCliJs.absolutePath}" --yes create-react-app "$@"
+            """.trimIndent() + "\n"
+            craScript.writeText(craScriptContent, Charsets.UTF_8)
+            craScript.setExecutable(true, false)
+            craScript.setReadable(true, false)
+
+            // 6. Create 'env' helper in $PATH
+            val envScript = File(usrBin, "env")
+            val envScriptContent = """
+                #!/system/bin/sh
+                if [ "${'$'}1" = "node" ]; then
+                    shift
+                    exec "${nativeNodeLauncher.absolutePath}" "$@"
+                elif [ -n "${'$'}1" ]; then
+                    cmd="${'$'}1"
+                    shift
+                    exec "${'$'}cmd" "$@"
+                else
+                    /system/bin/printenv
+                fi
+            """.trimIndent() + "\n"
+            envScript.writeText(envScriptContent, Charsets.UTF_8)
+            envScript.setExecutable(true, false)
+            envScript.setReadable(true, false)
+
+            // 7. Extract official NPM distribution tarball from assets if not yet extracted
+            if (!npmCliJs.exists()) {
+                try {
+                    context.assets.open("npm.tgz").use { assetIn ->
+                        extractTgzStream(assetIn, npmDir)
+                    }
+                    onProgress?.invoke("Official NPM distribution installed to ${npmDir.absolutePath}\n")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to extract npm.tgz from assets", e)
+                    onProgress?.invoke("Warning: could not extract bundled npm: ${e.message}\n")
+                }
+            }
+
+            // Mark initialization complete
+            markerFile.writeText("OK", Charsets.UTF_8)
+            onProgress?.invoke("Native Linux Node.js environment ready.\n")
+        }
     }
 
-    fun getUsrBin(context: Context): File {
-        return File(context.filesDir, "usr/bin")
+    private fun writeAndroidShim(shimFile: File) {
+        val content = """
+            'use strict';
+            if (!global.__MOBILE_CODE_ANDROID_SHIM_LOADED__) {
+              global.__MOBILE_CODE_ANDROID_SHIM_LOADED__ = true;
+
+              const fs = require('fs');
+              const path = require('path');
+              const os = require('os');
+              const cp = require('child_process');
+              const mod = require('module');
+
+              // 1. Ensure os.cpus() never returns an empty array when Android restricts /proc/stat
+              const origCpus = os.cpus;
+              os.cpus = function() {
+                try {
+                  const cpus = origCpus.call(os);
+                  if (Array.isArray(cpus) && cpus.length > 0) return cpus;
+                } catch (e) {}
+                return [
+                  { model: 'ARMv8 Processor', speed: 2000, times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 } },
+                  { model: 'ARMv8 Processor', speed: 2000, times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 } },
+                  { model: 'ARMv8 Processor', speed: 2000, times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 } },
+                  { model: 'ARMv8 Processor', speed: 2000, times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 } }
+                ];
+              };
+
+              const NODE_EXEC = process.execPath;
+              const USR_DIR = process.env.MOBILE_CODE_USR_DIR || path.resolve(process.env.HOME || '/', '../usr');
+              const NPM_CLI_JS = process.env.MOBILE_CODE_NPM_CLI || path.join(USR_DIR, 'lib/node_modules/npm/bin/npm-cli.js');
+              const NPX_CLI_JS = process.env.MOBILE_CODE_NPX_CLI || path.join(USR_DIR, 'lib/node_modules/npm/bin/npx-cli.js');
+              const ANDROID_SH = fs.existsSync('/system/bin/sh') ? '/system/bin/sh' : '/bin/sh';
+
+              function getPathFromEnvPairs(envPairs) {
+                if (Array.isArray(envPairs)) {
+                  for (let i = 0; i < envPairs.length; i++) {
+                    const pair = envPairs[i];
+                    if (typeof pair === 'string' && pair.startsWith('PATH=')) {
+                      return pair.slice(5);
+                    }
+                  }
+                }
+                return process.env.PATH || '';
+              }
+
+              function resolveInPath(cmd, pathEnv, cwd) {
+                if (!cmd) return null;
+                if (cmd.includes('/')) {
+                  const abs = path.isAbsolute(cmd) ? cmd : path.resolve(cwd || process.cwd(), cmd);
+                  return fs.existsSync(abs) ? abs : null;
+                }
+                const dirs = (pathEnv || '').split(':').filter(Boolean);
+                for (let i = 0; i < dirs.length; i++) {
+                  const candidate = path.join(dirs[i], cmd);
+                  try {
+                    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+                      return candidate;
+                    }
+                  } catch (e) {}
+                }
+                return null;
+              }
+
+              function inspectExecutable(filePath) {
+                if (!filePath) return null;
+                try {
+                  const fd = fs.openSync(filePath, 'r');
+                  const buf = Buffer.alloc(256);
+                  const bytesRead = fs.readSync(fd, buf, 0, 256, 0);
+                  fs.closeSync(fd);
+                  if (bytesRead >= 4 && buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46) {
+                    return { type: 'elf', path: filePath };
+                  }
+                  const header = buf.slice(0, bytesRead).toString('utf8');
+                  if (header.startsWith('#!')) {
+                    const firstLine = header.split(/\r?\n/)[0];
+                    if (/\bnode(js)?\b/.test(firstLine)) {
+                      return { type: 'node', path: filePath };
+                    }
+                    if (/\b(sh|bash)\b/.test(firstLine)) {
+                      return { type: 'sh', path: filePath };
+                    }
+                  }
+                  if (/\.(c?js|mjs)$/i.test(filePath)) {
+                    return { type: 'node', path: filePath };
+                  }
+                } catch (e) {}
+                return null;
+              }
+
+              function rewriteSingleShellSegment(segment, pathEnv, cwd) {
+                const trimmed = segment.trimStart();
+                const leadingWs = segment.slice(0, segment.length - trimmed.length);
+                if (!trimmed) return segment;
+
+                let rest = trimmed;
+                let envPrefix = '';
+                while (true) {
+                  const envMatch = rest.match(/^([A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+))\s+/);
+                  if (!envMatch) break;
+                  envPrefix += envMatch[0];
+                  rest = rest.slice(envMatch[0].length);
+                }
+
+                const tokenMatch = rest.match(/^(?:'([^']*)'|"([^"]*)"|(\S+))([\s\S]*)$/);
+                if (!tokenMatch) return segment;
+
+                const rawCmd = tokenMatch[1] ?? tokenMatch[2] ?? tokenMatch[3];
+                const tail = tokenMatch[4] || '';
+                if (!rawCmd) return segment;
+
+                const base = path.basename(rawCmd);
+                if (base === 'node' || base === 'nodejs') {
+                  return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}"${'$'}{tail}`;
+                }
+                if (base === 'npm') {
+                  return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{NPM_CLI_JS}"${'$'}{tail}`;
+                }
+                if (base === 'npx') {
+                  return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{NPX_CLI_JS}"${'$'}{tail}`;
+                }
+                if (rawCmd === '/bin/sh' || rawCmd === '/usr/bin/sh' || rawCmd === '/bin/bash' || rawCmd === '/usr/bin/bash') {
+                  return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{ANDROID_SH}"${'$'}{tail}`;
+                }
+
+                const resolved = resolveInPath(rawCmd, pathEnv, cwd);
+                if (resolved) {
+                  const info = inspectExecutable(resolved);
+                  if (info && info.type === 'node') {
+                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{resolved}"${'$'}{tail}`;
+                  }
+                  if (info && info.type === 'sh') {
+                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{ANDROID_SH}" "${'$'}{resolved}"${'$'}{tail}`;
+                  }
+                }
+                return segment;
+              }
+
+              function transformSpawnOptions(options) {
+                if (!options || typeof options.file !== 'string') return options;
+                const pathEnv = getPathFromEnvPairs(options.envPairs);
+                const cwd = options.cwd || process.cwd();
+                const rawFile = options.file;
+                const base = path.basename(rawFile);
+                const origArgs = Array.isArray(options.args) ? options.args.slice() : [rawFile];
+
+                if (
+                  rawFile === 'sh' ||
+                  rawFile === 'bash' ||
+                  rawFile === '/bin/sh' ||
+                  rawFile === '/usr/bin/sh' ||
+                  rawFile === '/bin/bash' ||
+                  rawFile === '/usr/bin/bash' ||
+                  rawFile === '/system/bin/sh'
+                ) {
+                  options.file = ANDROID_SH;
+                  origArgs[0] = ANDROID_SH;
+                  if (origArgs.length >= 3 && origArgs[1] === '-c' && typeof origArgs[2] === 'string') {
+                    origArgs[2] = rewriteSingleShellSegment(origArgs[2], pathEnv, cwd);
+                  }
+                  options.args = origArgs;
+                  return options;
+                }
+
+                if (base === 'node' || base === 'nodejs') {
+                  options.file = NODE_EXEC;
+                  origArgs[0] = NODE_EXEC;
+                  options.args = origArgs;
+                  return options;
+                }
+
+                if (base === 'npm') {
+                  options.file = NODE_EXEC;
+                  options.args = [NODE_EXEC, NPM_CLI_JS, ...origArgs.slice(1)];
+                  return options;
+                }
+
+                if (base === 'npx') {
+                  options.file = NODE_EXEC;
+                  options.args = [NODE_EXEC, NPX_CLI_JS, ...origArgs.slice(1)];
+                  return options;
+                }
+
+                const resolved = resolveInPath(rawFile, pathEnv, cwd);
+                if (resolved) {
+                  const info = inspectExecutable(resolved);
+                  if (info && info.type === 'node') {
+                    options.file = NODE_EXEC;
+                    options.args = [NODE_EXEC, resolved, ...origArgs.slice(1)];
+                    return options;
+                  }
+                  if (info && info.type === 'sh') {
+                    options.file = ANDROID_SH;
+                    options.args = [ANDROID_SH, resolved, ...origArgs.slice(1)];
+                    return options;
+                  }
+                }
+
+                return options;
+              }
+
+              const origSpawn = cp.ChildProcess.prototype.spawn;
+              cp.ChildProcess.prototype.spawn = function(options) {
+                transformSpawnOptions(options);
+                return origSpawn.call(this, options);
+              };
+
+              function normalizeSyncCall(file, args, options) {
+                let normArgs;
+                let normOpts;
+                if (Array.isArray(args)) {
+                  normArgs = args.slice();
+                  normOpts = { ...options };
+                } else if (args && typeof args === 'object') {
+                  normArgs = [];
+                  normOpts = { ...args };
+                } else {
+                  normArgs = [];
+                  normOpts = { ...options };
+                }
+                const env = normOpts.env || process.env;
+                const envPairs = Object.keys(env).map(k => `${'$'}{k}=${'$'}{env[k]}`);
+                const tempOpts = {
+                  file: String(file),
+                  args: [String(file), ...normArgs.map(String)],
+                  cwd: normOpts.cwd || process.cwd(),
+                  envPairs
+                };
+                if (normOpts.shell) {
+                  const shellCmd = [tempOpts.file, ...normArgs].join(' ');
+                  tempOpts.file = typeof normOpts.shell === 'string' ? normOpts.shell : ANDROID_SH;
+                  tempOpts.args = [tempOpts.file, '-c', shellCmd];
+                  normOpts = { ...normOpts, shell: false };
+                }
+                transformSpawnOptions(tempOpts);
+                return {
+                  file: tempOpts.file,
+                  args: tempOpts.args.slice(1),
+                  options: normOpts
+                };
+              }
+
+              const origSpawnSync = cp.spawnSync;
+              cp.spawnSync = function(file, args, options) {
+                const norm = normalizeSyncCall(file, args, options);
+                return origSpawnSync.call(this, norm.file, norm.args, norm.options);
+              };
+
+              const origExecFileSync = cp.execFileSync;
+              cp.execFileSync = function(file, args, options) {
+                const norm = normalizeSyncCall(file, args, options);
+                return origExecFileSync.call(this, norm.file, norm.args, norm.options);
+              };
+
+              const origExecSync = cp.execSync;
+              cp.execSync = function(command, options) {
+                const opts = { ...options };
+                const env = opts.env || process.env;
+                const pathEnv = env.PATH || process.env.PATH || '';
+                const cwd = opts.cwd || process.cwd();
+                const rewritten = rewriteSingleShellSegment(String(command), pathEnv, cwd);
+                if (fs.existsSync('/system/bin/sh')) {
+                  opts.shell = '/system/bin/sh';
+                }
+                return origExecSync.call(this, rewritten, opts);
+              };
+
+              if (typeof mod.syncBuiltinESMExports === 'function') {
+                try { mod.syncBuiltinESMExports(); } catch (e) {}
+              }
+            }
+        """.trimIndent() + "\n"
+        shimFile.writeText(content, Charsets.UTF_8)
+        shimFile.setReadable(true, false)
+    }
+
+    fun getUsrDir(context: Context): File = File(context.filesDir.canonicalFile, "usr")
+
+    fun getUsrBin(context: Context): File = File(getUsrDir(context), "bin")
+
+    fun getAndroidShimFile(context: Context): File = File(getUsrDir(context), "lib/android-shim.js")
+
+    fun getNpmCliJs(context: Context): File = File(getUsrDir(context), "lib/node_modules/npm/bin/npm-cli.js")
+
+    fun getNpxCliJs(context: Context): File = File(getUsrDir(context), "lib/node_modules/npm/bin/npx-cli.js")
+
+    fun getNativeNodeLauncher(context: Context): File {
+        val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
+        return File(nativeLibDir, "libnode_launcher.so")
     }
 
     fun isNativeNodeAvailable(context: Context): Boolean {
-        val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
-        return File(nativeLibDir, "libnode_launcher.so").exists()
+        return getNativeNodeLauncher(context).exists()
+    }
+
+    /**
+     * Rewrites top-level terminal invocations of node, nodejs, npm, npx, and create-react-app
+     * so they directly execute the ELF binary in nativeLibraryDir without triggering SELinux
+     * app_data_file script execve blocks on Android 10+.
+     */
+    fun rewriteCommandForAndroid(context: Context, cmdLine: String): String {
+        val trimmed = cmdLine.trim()
+        if (trimmed.isEmpty()) return cmdLine
+        val launcher = getNativeNodeLauncher(context).absolutePath
+        val npmCli = getNpmCliJs(context).absolutePath
+        val npxCli = getNpxCliJs(context).absolutePath
+
+        val match = Regex("""^(\S+)([\s\S]*)$""").find(trimmed) ?: return cmdLine
+        val bin = match.groupValues[1]
+        val rest = match.groupValues[2]
+
+        return when (bin) {
+            "node", "nodejs" -> "\"$launcher\"$rest"
+            "npm" -> "\"$launcher\" \"$npmCli\"$rest"
+            "npx" -> "\"$launcher\" \"$npxCli\" --yes$rest"
+            "create-react-app" -> "\"$launcher\" \"$npxCli\" --yes create-react-app$rest"
+            else -> cmdLine
+        }
     }
 
     private fun extractTgzStream(inputStream: InputStream, targetDir: File) {

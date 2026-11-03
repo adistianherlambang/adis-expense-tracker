@@ -381,26 +381,12 @@ class TerminalViewModel(
             }
 
             "node", "nodejs", "npm", "npx", "create-react-app" -> {
-                val context = workspaceManager.appContext
-                if (NodeNativeBootstrap.isNativeNodeAvailable(context)) {
-                    val finalCmd = if ((binary == "node" || binary == "nodejs") && args.isEmpty()) {
-                        "node -i"
-                    } else {
-                        cmdLine
-                    }
-                    executeNativeProcess(session, finalCmd)
+                val finalCmd = if ((binary == "node" || binary == "nodejs") && args.isEmpty()) {
+                    "node -i"
                 } else {
-                    if (binary == "node" || binary == "nodejs") {
-                        if (args.isEmpty()) {
-                            session.replMode = "NODE"
-                            nodeEngine.executeNodeCommand(emptyList(), session.workingDir) { session.append(it) }
-                        } else {
-                            nodeEngine.executeNodeCommand(args, session.workingDir) { session.append(it) }
-                        }
-                    } else {
-                        nodeEngine.executeNpmCommand(args, session.workingDir) { session.append(it) }
-                    }
+                    cmdLine
                 }
+                executeNativeProcess(session, finalCmd)
             }
 
             "ports" -> {
@@ -550,26 +536,46 @@ class TerminalViewModel(
     private suspend fun executeNativeProcess(session: TerminalSession, cmdLine: String) = withContext(Dispatchers.IO) {
         try {
             val context = workspaceManager.appContext
+            NodeNativeBootstrap.ensureInitialized(context) { progress ->
+                session.append(progress)
+            }
+
+            val usrDir = NodeNativeBootstrap.getUsrDir(context)
             val usrBin = NodeNativeBootstrap.getUsrBin(context)
+            val shimFile = NodeNativeBootstrap.getAndroidShimFile(context)
+            val npmCliJs = NodeNativeBootstrap.getNpmCliJs(context)
+            val npxCliJs = NodeNativeBootstrap.getNpxCliJs(context)
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val currentPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
+            val canonicalWorkDir = session.workingDir.canonicalFile.apply { if (!exists()) mkdirs() }
+            val effectiveCmd = NodeNativeBootstrap.rewriteCommandForAndroid(context, cmdLine)
 
-            val pb = ProcessBuilder("/system/bin/sh", "-c", cmdLine)
-            pb.directory(session.workingDir)
+            val pb = ProcessBuilder("/system/bin/sh", "-c", effectiveCmd)
+            pb.directory(canonicalWorkDir)
             val env = pb.environment()
             env["PATH"] = "${usrBin.absolutePath}:$currentPath"
             env["LD_LIBRARY_PATH"] = "$nativeLibDir:${env["LD_LIBRARY_PATH"] ?: ""}"
-            env["NODE_PATH"] = File(context.filesDir, "usr/lib/node_modules").absolutePath + ":" + File(session.workingDir, "node_modules").absolutePath
-            val homeDir = File(context.filesDir, "home").apply { if (!exists()) mkdirs() }
+            env["NODE_PATH"] = File(usrDir, "lib/node_modules").absolutePath + ":" + File(canonicalWorkDir, "node_modules").absolutePath
+            env["NODE_OPTIONS"] = "--require ${shimFile.absolutePath}"
+            env["MOBILE_CODE_USR_DIR"] = usrDir.absolutePath
+            env["MOBILE_CODE_NPM_CLI"] = npmCliJs.absolutePath
+            env["MOBILE_CODE_NPX_CLI"] = npxCliJs.absolutePath
+
+            val homeDir = File(context.filesDir.canonicalFile, "home").apply { if (!exists()) mkdirs() }
             env["HOME"] = homeDir.absolutePath
-            val tmpDir = File(context.cacheDir, "tmp").apply { if (!exists()) mkdirs() }
+            val tmpDir = File(context.cacheDir.canonicalFile, "tmp").apply { if (!exists()) mkdirs() }
             env["TMPDIR"] = tmpDir.absolutePath
             env["TEMP"] = tmpDir.absolutePath
             env["TMP"] = tmpDir.absolutePath
-            env["SANDBOX_ROOT"] = workspaceManager.getSandboxRoot().absolutePath
+            env["SANDBOX_ROOT"] = workspaceManager.getSandboxRoot().canonicalPath
             env["TERM"] = "xterm-256color"
             env["npm_config_scripts_prepend_node_path"] = "true"
             env["npm_config_update_notifier"] = "false"
+            env["npm_config_yes"] = "true"
+            env["npm_config_legacy_peer_deps"] = "true"
+            env["npm_config_script_shell"] = "/system/bin/sh"
+            env["npm_config_cache"] = File(homeDir, ".npm").absolutePath
+            env["npm_config_prefix"] = usrDir.absolutePath
 
             pb.redirectErrorStream(true)
             val proc = pb.start()
