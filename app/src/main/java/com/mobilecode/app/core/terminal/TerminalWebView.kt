@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -43,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -86,6 +88,7 @@ fun TerminalWebView(
     val workingDir by session.workingDirState.collectAsState()
     val replMode by session.replModeState.collectAsState()
     val commandInput by terminalViewModel.commandInput.collectAsState()
+    val isRunning by session.isProcessRunning.collectAsState()
 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -93,9 +96,10 @@ fun TerminalWebView(
     val keyboardController = LocalSoftwareKeyboardController.current
     val verticalScrollState = rememberScrollState()
 
-    val promptPrefix = when (replMode) {
-        "NODE" -> "node > "
-        "PYTHON" -> "python >>> "
+    val promptPrefix = when {
+        isRunning -> ""
+        replMode == "NODE" -> "node > "
+        replMode == "PYTHON" -> "python >>> "
         else -> "${workingDir.name} $ "
     }
 
@@ -161,6 +165,7 @@ fun TerminalWebView(
     }
 
     fun pasteIntoTerminal() {
+        if (isRunning) return
         val clip = clipboardManager.getText()?.text ?: return
         if (clip.isEmpty()) return
         val normalized = clip.replace("\r\n", "\n")
@@ -189,6 +194,11 @@ fun TerminalWebView(
         verticalScrollState.scrollTo(verticalScrollState.maxValue)
     }
 
+    LaunchedEffect(outputText.length) {
+        kotlinx.coroutines.yield()
+        verticalScrollState.scrollTo(verticalScrollState.maxValue)
+    }
+
     val terminalVisualTransformation = remember(prefixText.length) {
         VisualTransformation { annotated ->
             TransformedText(
@@ -213,13 +223,15 @@ fun TerminalWebView(
                         }
                     }
                     Key.V -> {
-                        pasteIntoTerminal()
+                        if (!isRunning) pasteIntoTerminal()
                         true
                     }
                     else -> false
                 }
             } else if (keyEvent.key == Key.Enter || keyEvent.key == Key.NumPadEnter) {
-                terminalViewModel.submitCurrentCommand()
+                if (!isRunning) {
+                    terminalViewModel.submitCurrentCommand()
+                }
                 true
             } else {
                 false
@@ -311,28 +323,61 @@ fun TerminalWebView(
                     )
                 }
 
-                Row(
-                    modifier = Modifier
-                        .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(3.dp))
-                        .clickable {
-                            terminalViewModel.submitCurrentCommand()
-                        }
-                        .padding(horizontal = 7.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Run",
-                        tint = Color.White,
-                        modifier = Modifier.size(11.dp)
-                    )
+                if (isRunning) {
+                    Row(
+                        modifier = Modifier
+                            .background(Color(0xFFE51400), RoundedCornerShape(3.dp))
+                            .clickable {
+                                terminalViewModel.sendInput("\u0003")
+                            }
+                            .padding(horizontal = 7.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Stop,
+                            contentDescription = "Stop",
+                            tint = Color.White,
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Text(
+                            text = "Stop (^C)",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "Enter",
-                        color = Color.White,
+                        text = "● Running",
+                        color = Color(0xFF4EC9B0),
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.Medium
                     )
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(3.dp))
+                            .clickable {
+                                terminalViewModel.submitCurrentCommand()
+                            }
+                            .padding(horizontal = 7.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Run",
+                            tint = Color.White,
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Text(
+                            text = "Enter",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
 
@@ -362,9 +407,10 @@ fun TerminalWebView(
                 quickCommands.forEach { qCmd ->
                     Box(
                         modifier = Modifier
+                            .alpha(if (isRunning) 0.35f else 1f)
                             .background(Color(0xFF2D2D2E), RoundedCornerShape(3.dp))
                             .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(3.dp))
-                            .clickable {
+                            .clickable(enabled = !isRunning) {
                                 terminalViewModel.sendCommand(qCmd)
                             }
                             .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -398,8 +444,14 @@ fun TerminalWebView(
         ) {
             BasicTextField(
                 value = textFieldValue,
+                readOnly = isRunning,
                 onValueChange = { newValue ->
                     onTerminalFocused?.invoke()
+
+                    if (isRunning) {
+                        // User cannot type when a process is running
+                        return@BasicTextField
+                    }
 
                     if (newValue.text == textFieldValue.text) {
                         // Allow arbitrary text selection anywhere in terminal output so user can Copy

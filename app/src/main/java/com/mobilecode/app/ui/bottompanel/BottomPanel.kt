@@ -36,12 +36,14 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.HorizontalSplit
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.VerticalSplit
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -650,6 +652,10 @@ fun BottomPanel(
                     val context = LocalContext.current
                     val currentWsDir = activeSession?.workingDir
 
+                    LaunchedEffect(Unit) {
+                        DevServerManager.scanActivePorts(currentWsDir)
+                    }
+
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
@@ -667,31 +673,61 @@ fun BottomPanel(
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 )
-                                if (activeServers.isEmpty()) {
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
                                     Row(
                                         modifier = Modifier
-                                            .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(3.dp))
+                                            .background(Color(0xFF2D2D2E), RoundedCornerShape(3.dp))
+                                            .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(3.dp))
                                             .clickable {
-                                                if (currentWsDir != null) {
-                                                    DevServerManager.startServer(3000, currentWsDir, currentWsDir.name)
-                                                }
+                                                DevServerManager.scanActivePorts(currentWsDir)
                                             }
-                                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                                            .padding(horizontal = 7.dp, vertical = 3.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.PlayArrow,
-                                            contentDescription = "Start Port 3000",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(12.dp)
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Scan Ports",
+                                            tint = VsCodeTheme.Foreground,
+                                            modifier = Modifier.size(11.dp)
                                         )
                                         Spacer(modifier = Modifier.width(3.dp))
                                         Text(
-                                            text = "Start Port 3000",
-                                            color = Color.White,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.SemiBold
+                                            text = "Scan",
+                                            color = VsCodeTheme.Foreground,
+                                            fontSize = 10.sp
                                         )
+                                    }
+
+                                    if (activeServers.isEmpty()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(3.dp))
+                                                .clickable {
+                                                    if (currentWsDir != null) {
+                                                        DevServerManager.startServer(3000, currentWsDir, currentWsDir.name)
+                                                    }
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = "Start Port 3000",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text(
+                                                text = "Start Port 3000",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
                                     }
                                 }
                             }

@@ -80,12 +80,60 @@ object DevServerManager {
     @Synchronized
     fun stopServer(port: Int): Boolean {
         val s = runningSockets.remove(port)
+        _activeServers.value = _activeServers.value.filter { it.port != port }
         return try {
             s?.close()
-            _activeServers.value = _activeServers.value.filter { it.port != port }
             true
         } catch (e: Exception) {
             false
+        }
+    }
+
+    @Synchronized
+    fun registerExternalPort(
+        port: Int,
+        name: String = "Dev Server",
+        rootDir: File = File(".")
+    ) {
+        val existing = _activeServers.value.find { it.port == port }
+        if (existing == null) {
+            val info = DevServerInfo(
+                port = port,
+                rootDir = rootDir.canonicalFile,
+                url = "http://localhost:$port",
+                startedAt = System.currentTimeMillis(),
+                name = name
+            )
+            _activeServers.value = _activeServers.value + info
+        }
+    }
+
+    fun isPortListeningLocally(port: Int): Boolean {
+        if (runningSockets.containsKey(port)) return true
+        return try {
+            Socket().use { s ->
+                s.connect(java.net.InetSocketAddress("127.0.0.1", port), 250)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun scanActivePorts(rootDir: File? = null) {
+        val candidatePorts = listOf(3000, 3001, 5173, 8080, 8000, 5000, 4200, 8081)
+        scope.launch {
+            for (p in candidatePorts) {
+                if (isPortListeningLocally(p)) {
+                    val label = when (p) {
+                        3000, 3001 -> "React / Webpack Dev Server"
+                        5173 -> "Vite Dev Server"
+                        8080, 8081 -> "Web Server"
+                        else -> "Live Dev Server"
+                    }
+                    registerExternalPort(p, label, rootDir ?: File("."))
+                }
+            }
         }
     }
 

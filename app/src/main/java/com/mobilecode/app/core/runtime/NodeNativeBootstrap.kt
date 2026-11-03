@@ -201,6 +201,22 @@ object NodeNativeBootstrap {
             setExecutable(true, false)
             setReadable(true, false)
         }
+
+        // 5. Create 'xdg-open' helper in $PATH for dev server browser openers
+        val xdgOpenScriptContent = """
+            #!/system/bin/sh
+            URL="${'$'}1"
+            if [ -n "${'$'}URL" ]; then
+                /system/bin/am start -a android.intent.action.VIEW -d "${'$'}URL" >/dev/null 2>&1 || true
+            fi
+            exit 0
+        """.trimIndent() + "\n"
+
+        File(usrBin, "xdg-open").apply {
+            writeText(xdgOpenScriptContent, Charsets.UTF_8)
+            setExecutable(true, false)
+            setReadable(true, false)
+        }
     }
 
     private fun writeAndroidShim(shimFile: File) {

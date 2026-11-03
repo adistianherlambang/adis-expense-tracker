@@ -578,9 +578,28 @@ class TerminalViewModel(
             env["npm_config_cache"] = File(homeDir, ".npm").absolutePath
             env["npm_config_prefix"] = usrDir.absolutePath
 
+            // Dev server environment variables to prevent hanging on browser open or port prompts
+            env["BROWSER"] = "none"
+            env["CI"] = "false"
+            env["PORT"] = "3000"
+            env["HOST"] = "0.0.0.0"
+            env["WDS_SOCKET_PORT"] = "0"
+            env["WATCHPACK_POLLING"] = "true"
+            env["CHOKIDAR_USEPOLLING"] = "true"
+            env["FAST_REFRESH"] = "true"
+
+            // If an internal static server was holding port 3000, free it for the dev server
+            if (DevServerManager.isPortRunning(3000)) {
+                DevServerManager.stopServer(3000)
+            }
+
             pb.redirectErrorStream(true)
             val proc = pb.start()
             session.runningProcess = proc
+            session.isProcessRunning.value = true
+
+            // Trigger background port scanner so when Webpack/Vite opens a port, it's discovered
+            DevServerManager.scanActivePorts(session.workingDir)
 
             val stream = proc.inputStream
             val buffer = ByteArray(1024)
@@ -594,6 +613,8 @@ class TerminalViewModel(
             session.append("sh: ${e.message}\n")
         } finally {
             session.runningProcess = null
+            session.isProcessRunning.value = false
+            DevServerManager.scanActivePorts(session.workingDir)
         }
     }
 

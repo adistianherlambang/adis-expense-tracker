@@ -1,5 +1,6 @@
 package com.mobilecode.app.core.terminal
 
+import com.mobilecode.app.core.runtime.DevServerManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,6 +14,8 @@ class TerminalSession(
 ) {
     @Volatile
     var runningProcess: Process? = null
+
+    val isProcessRunning = MutableStateFlow(false)
 
     private val buffer = StringBuilder()
 
@@ -46,6 +49,22 @@ class TerminalSession(
             buffer.delete(0, 12000)
         }
         _outputState.value = buffer.toString()
+
+        // Automatically detect dev server port in output (e.g. "Local: http://localhost:3000")
+        try {
+            portDetectionRegex.findAll(cleanText).forEach { match ->
+                val portNum = match.groupValues[1].toIntOrNull()
+                if (portNum != null && portNum in 1024..65535) {
+                    val label = when (portNum) {
+                        3000 -> "React Dev Server"
+                        5173 -> "Vite Dev Server"
+                        8080 -> "Web Dev Server"
+                        else -> "Dev Server"
+                    }
+                    DevServerManager.registerExternalPort(portNum, label, workingDir)
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     @Synchronized
@@ -62,7 +81,10 @@ class TerminalSession(
             runningProcess?.destroyForcibly()
         } catch (_: Exception) {}
         runningProcess = null
+        isProcessRunning.value = false
     }
+
+    private val portDetectionRegex = Regex("""(?:https?://(?:localhost|127\.0\.0\.1):|port\s+|listening\s+on\s+.*?:)(\d{3,5})""", RegexOption.IGNORE_CASE)
 
     private fun stripAnsiCodes(input: String): String {
         return input
