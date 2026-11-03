@@ -21,10 +21,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -64,9 +63,6 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TransformedText
@@ -90,7 +86,6 @@ fun TerminalWebView(
 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    val topInputFocusRequester = remember { FocusRequester() }
     val canvasFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val verticalScrollState = rememberScrollState()
@@ -135,20 +130,37 @@ fun TerminalWebView(
         }
     }
 
+    /**
+     * Executes single or multi-line commands sequentially without concatenating them.
+     * E.g. "npm -v\nnode -v" executes "npm -v" then "node -v".
+     */
+    fun executeLinesSequentially(rawText: String) {
+        val normalized = rawText.replace("\r\n", "\n")
+        val lines = normalized.split("\n")
+        if (lines.size == 1) {
+            val clean = lines[0].trimEnd('\r', '\n')
+            terminalViewModel.updateCommandInput(clean)
+            terminalViewModel.submitCurrentCommand()
+        } else {
+            lines.forEachIndexed { idx, line ->
+                val cleanLine = line.trimEnd('\r', '\n')
+                if (idx == lines.lastIndex && !normalized.endsWith("\n")) {
+                    terminalViewModel.updateCommandInput(cleanLine)
+                } else if (cleanLine.isNotBlank()) {
+                    terminalViewModel.sendCommand(cleanLine)
+                }
+            }
+        }
+    }
+
     fun pasteIntoTerminal() {
         val clip = clipboardManager.getText()?.text ?: return
         if (clip.isEmpty()) return
-        val singleLine = clip.replace("\r\n", "\n").trimEnd('\n')
-        if (!singleLine.contains("\n")) {
-            terminalViewModel.appendToCommandInput(singleLine)
+        val normalized = clip.replace("\r\n", "\n")
+        if (!normalized.contains("\n")) {
+            terminalViewModel.appendToCommandInput(normalized)
         } else {
-            // Multi-line paste: execute lines sequentially, leaving any trailing partial line or executing all
-            val lines = singleLine.split("\n")
-            lines.forEach { line ->
-                if (line.isNotBlank()) {
-                    terminalViewModel.sendCommand(line)
-                }
-            }
+            executeLinesSequentially(commandInput + normalized)
         }
     }
 
@@ -202,246 +214,152 @@ fun TerminalWebView(
             .background(VsCodeTheme.PanelBackground)
             .then(clipboardKeyHandler)
     ) {
-        // 1. Dedicated Top Command Input Bar (Always visible at top of Terminal, with Copy & Paste support)
+        // Single Compact Action & Quick-Command Strip (Copy, Paste, Clear, History, Quick Chips)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(38.dp)
-                .background(Color(0xFF252526))
-                .border(1.dp, VsCodeTheme.FocusBorder)
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .height(30.dp)
+                .background(Color(0xFF202021))
+                .border(0.5.dp, VsCodeTheme.BorderColor)
+                .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                text = promptPrefix,
-                color = Color(0xFF4EC9B0),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = VsCodeMonospaceFont
-            )
-
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        onTerminalFocused?.invoke()
-                        topInputFocusRequester.requestFocus()
-                        keyboardController?.show()
-                    },
-                contentAlignment = Alignment.CenterStart
+            // Left: Copy, Paste, History Up/Down, Enter Action Buttons
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                BasicTextField(
-                    value = commandInput,
-                    onValueChange = { newVal ->
-                        onTerminalFocused?.invoke()
-                        if (newVal.contains("\n")) {
-                            val clean = newVal.replace("\n", "").replace("\r", "")
-                            terminalViewModel.updateCommandInput(clean)
-                            terminalViewModel.submitCurrentCommand()
-                        } else {
-                            terminalViewModel.updateCommandInput(newVal)
-                        }
-                    },
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        color = Color.White,
-                        fontFamily = VsCodeMonospaceFont,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
-                    ),
-                    cursorBrush = SolidColor(VsCodeTheme.FocusBorder),
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.None,
-                        autoCorrectEnabled = false,
-                        keyboardType = KeyboardType.Ascii,
-                        imeAction = ImeAction.Send
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onSend = { terminalViewModel.submitCurrentCommand() },
-                        onDone = { terminalViewModel.submitCurrentCommand() }
-                    ),
+                IconButton(
+                    onClick = { copyFromTerminal() },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = "Copy",
+                        tint = VsCodeTheme.Foreground,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { pasteIntoTerminal() },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContentPaste,
+                        contentDescription = "Paste",
+                        tint = VsCodeTheme.Foreground,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { terminalViewModel.navigateHistoryUp() },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowUp,
+                        contentDescription = "Previous Command",
+                        tint = VsCodeTheme.Foreground,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { terminalViewModel.navigateHistoryDown() },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Next Command",
+                        tint = VsCodeTheme.Foreground,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { terminalViewModel.clearActiveSession() },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Block,
+                        contentDescription = "Clear",
+                        tint = VsCodeTheme.Foreground,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+
+                Row(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(topInputFocusRequester)
-                        .onFocusChanged { state ->
-                            if (state.isFocused) {
-                                onTerminalFocused?.invoke()
-                            }
-                        },
-                    decorationBox = { innerTextField ->
-                        Box(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentAlignment = Alignment.CenterStart
-                        ) {
-                            if (commandInput.isEmpty()) {
-                                Text(
-                                    text = "Ketik perintah (node -v, python -V, npm install)...",
-                                    color = VsCodeTheme.SecondaryForeground,
-                                    fontSize = 12.sp,
-                                    fontFamily = VsCodeMonospaceFont,
-                                    maxLines = 1
-                                )
-                            }
-                            innerTextField()
+                        .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(3.dp))
+                        .clickable {
+                            terminalViewModel.submitCurrentCommand()
                         }
-                    }
-                )
+                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Run",
+                        tint = Color.White,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Text(
+                        text = "Enter",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
 
-            // Clipboard Copy Button
-            IconButton(
-                onClick = { copyFromTerminal() },
-                modifier = Modifier.size(26.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ContentCopy,
-                    contentDescription = "Copy Terminal Output / Selection",
-                    tint = VsCodeTheme.Foreground,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
+            Spacer(modifier = Modifier.width(6.dp))
 
-            // Clipboard Paste Button
-            IconButton(
-                onClick = { pasteIntoTerminal() },
-                modifier = Modifier.size(26.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ContentPaste,
-                    contentDescription = "Paste Clipboard into Terminal",
-                    tint = VsCodeTheme.Foreground,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-
-            IconButton(
-                onClick = { terminalViewModel.navigateHistoryUp() },
-                modifier = Modifier.size(24.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowUp,
-                    contentDescription = "Previous Command",
-                    tint = VsCodeTheme.Foreground,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-
-            IconButton(
-                onClick = { terminalViewModel.navigateHistoryDown() },
-                modifier = Modifier.size(24.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Next Command",
-                    tint = VsCodeTheme.Foreground,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-
+            // Right: Scrollable Quick Chips
             Row(
                 modifier = Modifier
-                    .background(VsCodeTheme.BadgeBackground, RoundedCornerShape(4.dp))
-                    .clickable {
-                        terminalViewModel.submitCurrentCommand()
-                    }
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "Run",
-                    tint = Color.White,
-                    modifier = Modifier.size(13.dp)
+                val quickCommands = listOf(
+                    "node -v",
+                    "python --version",
+                    "npm init -y",
+                    "pip list",
+                    "ls -la",
+                    "pwd",
+                    "verify-env",
+                    "sandbox",
+                    "git status",
+                    "help",
+                    "clear"
                 )
-                Text(
-                    text = "Run",
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        // 2. Quick Command & Clipboard Strip
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(28.dp)
-                .background(Color(0xFF1F1F20))
-                .border(0.5.dp, VsCodeTheme.BorderColor)
-                .padding(horizontal = 8.dp)
-                .horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .background(Color(0xFF2B3A4A), RoundedCornerShape(3.dp))
-                    .border(0.5.dp, VsCodeTheme.FocusBorder, RoundedCornerShape(3.dp))
-                    .clickable { copyFromTerminal() }
-                    .padding(horizontal = 7.dp, vertical = 2.dp)
-            ) {
-                Text(
-                    text = "Copy",
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    fontFamily = VsCodeMonospaceFont
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .background(Color(0xFF2B3A4A), RoundedCornerShape(3.dp))
-                    .border(0.5.dp, VsCodeTheme.FocusBorder, RoundedCornerShape(3.dp))
-                    .clickable { pasteIntoTerminal() }
-                    .padding(horizontal = 7.dp, vertical = 2.dp)
-            ) {
-                Text(
-                    text = "Paste",
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    fontFamily = VsCodeMonospaceFont
-                )
-            }
-
-            val quickCommands = listOf(
-                "node -v",
-                "python --version",
-                "npm init -y",
-                "pip list",
-                "ls -la",
-                "pwd",
-                "sandbox",
-                "git status",
-                "help",
-                "clear"
-            )
-            quickCommands.forEach { qCmd ->
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFF333333), RoundedCornerShape(3.dp))
-                        .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(3.dp))
-                        .clickable {
-                            terminalViewModel.sendCommand(qCmd)
-                        }
-                        .padding(horizontal = 7.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = qCmd,
-                        color = VsCodeTheme.Foreground,
-                        fontSize = 10.sp,
-                        fontFamily = VsCodeMonospaceFont
-                    )
+                quickCommands.forEach { qCmd ->
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xFF2D2D2E), RoundedCornerShape(3.dp))
+                            .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(3.dp))
+                            .clickable {
+                                terminalViewModel.sendCommand(qCmd)
+                            }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = qCmd,
+                            color = VsCodeTheme.Foreground,
+                            fontSize = 10.sp,
+                            fontFamily = VsCodeMonospaceFont
+                        )
+                    }
                 }
             }
         }
 
-        // 3. Main Editable & Selectable Terminal Surface
+        // Single Unified Terminal Surface (Direct typing and interactive execution right on the terminal)
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -463,8 +381,7 @@ fun TerminalWebView(
                     onTerminalFocused?.invoke()
 
                     if (newValue.text == textFieldValue.text) {
-                        // Allow arbitrary text selection anywhere in terminal output so user can Copy!
-                        // Only clamp to the prompt if selection is a collapsed single cursor.
+                        // Allow arbitrary text selection anywhere in terminal output so user can Copy
                         if (!newValue.selection.collapsed) {
                             textFieldValue = newValue
                         } else {
@@ -477,9 +394,7 @@ fun TerminalWebView(
                     if (newValue.text.startsWith(prefixText)) {
                         val newCmd = newValue.text.substring(prefixText.length)
                         if (newCmd.contains("\n")) {
-                            val cleanCmd = newCmd.replace("\n", "").replace("\r", "")
-                            terminalViewModel.updateCommandInput(cleanCmd)
-                            terminalViewModel.submitCurrentCommand()
+                            executeLinesSequentially(newCmd)
                         } else {
                             val clampedStart = newValue.selection.start.coerceIn(prefixText.length, newValue.text.length)
                             val clampedEnd = newValue.selection.end.coerceIn(prefixText.length, newValue.text.length)
@@ -487,19 +402,19 @@ fun TerminalWebView(
                             terminalViewModel.updateCommandInput(newCmd)
                         }
                     } else if (newValue.text.length < textFieldValue.text.length) {
+                        // Backspace handled safely at prompt
                         val rebuilt = prefixText + commandInput
                         textFieldValue = TextFieldValue(
                             text = rebuilt,
                             selection = TextRange(rebuilt.length)
                         )
                     } else {
+                        // Text typed/pasted with cursor elsewhere on screen
                         val diffLen = newValue.text.length - textFieldValue.text.length
                         val insertPos = (newValue.selection.start - diffLen).coerceIn(0, newValue.text.length)
                         val inserted = newValue.text.substring(insertPos, (insertPos + diffLen).coerceAtMost(newValue.text.length))
                         if (inserted.contains("\n")) {
-                            val clean = (commandInput + inserted).replace("\n", "").replace("\r", "")
-                            terminalViewModel.updateCommandInput(clean)
-                            terminalViewModel.submitCurrentCommand()
+                            executeLinesSequentially(commandInput + inserted)
                         } else {
                             val nextCmd = commandInput + inserted
                             val rebuilt = prefixText + nextCmd
