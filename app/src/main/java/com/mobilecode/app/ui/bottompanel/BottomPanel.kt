@@ -80,7 +80,8 @@ fun BottomPanel(
     onNavigateToFile: (File, Int) -> Unit = { _, _ -> },
     onTerminalFocused: (() -> Unit)? = null,
     onClosePanel: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    height: androidx.compose.ui.unit.Dp = 230.dp
 ) {
     var activeTab by remember { mutableStateOf(PanelTab.TERMINAL) }
     var isMaximized by remember { mutableStateOf(false) }
@@ -102,7 +103,7 @@ fun BottomPanel(
     val debugEntries by DebugConsoleManager.entries.collectAsState()
     var debugInput by remember { mutableStateOf("") }
 
-    val panelHeight = if (isMaximized) 380.dp else 210.dp
+    val panelHeight = if (isMaximized) 420.dp else height
 
     Column(
         modifier = modifier

@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.dp
 import com.mobilecode.app.core.designsystem.VsCodeTheme
 import com.mobilecode.app.core.editor.EditorViewModel
 import com.mobilecode.app.core.editor.deleteCharFromEditor
@@ -35,6 +36,8 @@ import com.mobilecode.app.ui.activitybar.ActivityView
 import com.mobilecode.app.ui.bottompanel.BottomPanel
 import com.mobilecode.app.ui.commandpalette.CommandPalette
 import com.mobilecode.app.ui.commandpalette.PaletteCommand
+import com.mobilecode.app.ui.components.HorizontalResizeHandle
+import com.mobilecode.app.ui.components.VerticalResizeHandle
 import com.mobilecode.app.ui.editor.EditorArea
 import com.mobilecode.app.ui.sidebar.SidebarContainer
 import com.mobilecode.app.ui.statusbar.StatusBar
@@ -60,6 +63,8 @@ fun MainScreen(
 
     var isSidebarVisible by remember { mutableStateOf(isLandscape || isTablet) }
     var isBottomPanelVisible by remember { mutableStateOf(true) }
+    var sidebarWidth by remember { mutableStateOf(260.dp) }
+    var bottomPanelHeight by remember { mutableStateOf(240.dp) }
     var currentActivityView by remember { mutableStateOf(ActivityView.EXPLORER) }
     var editorWebView by remember { mutableStateOf<WebView?>(null) }
     var accessoryTarget by remember { mutableStateOf("EDIT") }
@@ -145,6 +150,13 @@ fun MainScreen(
                             if (!isLandscape && !isTablet) {
                                 isSidebarVisible = false // Auto collapse on mobile
                             }
+                        },
+                        width = sidebarWidth
+                    )
+
+                    VerticalResizeHandle(
+                        onDeltaX = { deltaX ->
+                            sidebarWidth = (sidebarWidth + deltaX).coerceIn(160.dp, 500.dp)
                         }
                     )
                 }
@@ -168,6 +180,13 @@ fun MainScreen(
 
                     // Bottom Panel (Terminal, Problems, Output, Debug)
                     if (isBottomPanelVisible) {
+                        HorizontalResizeHandle(
+                            onDeltaY = { deltaY ->
+                                // Dragging up increases height, dragging down decreases height
+                                bottomPanelHeight = (bottomPanelHeight - deltaY).coerceIn(90.dp, 580.dp)
+                            }
+                        )
+
                         BottomPanel(
                             terminalViewModel = terminalViewModel,
                             editorViewModel = editorViewModel,
@@ -178,7 +197,8 @@ fun MainScreen(
                             onTerminalFocused = {
                                 accessoryTarget = "TERM"
                             },
-                            onClosePanel = { isBottomPanelVisible = false }
+                            onClosePanel = { isBottomPanelVisible = false },
+                            height = bottomPanelHeight
                         )
                     }
                 }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.mobilecode.app.core.designsystem.VsCodeTheme
 import com.mobilecode.app.core.filesystem.WorkspaceManager
@@ -26,11 +27,12 @@ fun SidebarContainer(
     settingsRepository: SettingsRepository,
     packageManager: PackageManager,
     onFileSelected: (File) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    width: Dp = 260.dp
 ) {
     Box(
         modifier = modifier
-            .width(260.dp)
+            .width(width)
             .fillMaxHeight()
             .background(VsCodeTheme.SidebarBackground)
             .border(width = 1.dp, color = VsCodeTheme.BorderColor)
