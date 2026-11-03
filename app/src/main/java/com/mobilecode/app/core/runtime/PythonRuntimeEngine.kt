@@ -71,11 +71,15 @@ class PythonRuntimeEngine(
                     onOutput("Created virtual environment in ${File(workingDir, venvName).absolutePath}\n")
                 } else if (mod == "http.server") {
                     val port = args.getOrNull(2)?.toIntOrNull() ?: 8000
+                    if (port < 1024) {
+                        onOutput("PermissionError: [Errno 13] Permission denied for privileged port $port. Please use ports >= 1024 (e.g. 8000, 3000, 8080).\n")
+                        return
+                    }
                     val res = DevServerManager.startServer(port, workingDir, "Python http.server")
                     if (res.isSuccess) {
-                        onOutput("Serving HTTP on 0.0.0.0 port $port (http://localhost:$port/) ...\n")
+                        onOutput("Serving HTTP on 127.0.0.1 port $port (http://127.0.0.1:$port/ or http://localhost:$port/) ...\n")
                     } else {
-                        onOutput("OSError: [Errno 98] Address already in use (port $port): ${res.exceptionOrNull()?.message}\n")
+                        onOutput("OSError: [Errno 98] Could not bind port $port: ${res.exceptionOrNull()?.message}\n")
                     }
                 } else {
                     onOutput("python3: No module named $mod\n")

@@ -19,7 +19,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION = 7
+    private const val BOOTSTRAP_VERSION = 8
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -214,6 +214,24 @@ object NodeNativeBootstrap {
 
         File(usrBin, "xdg-open").apply {
             writeText(xdgOpenScriptContent, Charsets.UTF_8)
+            setExecutable(true, false)
+            setReadable(true, false)
+        }
+
+        // 6. Create 'sudo' helper in $PATH for sandbox execution without errors
+        val sudoScriptContent = """
+            #!/system/bin/sh
+            if [ -z "${'$'}1" ]; then
+                echo "usage: sudo command [args...]"
+                exit 1
+            fi
+            cmd="${'$'}1"
+            shift
+            exec "${'$'}cmd" "$@"
+        """.trimIndent() + "\n"
+
+        File(usrBin, "sudo").apply {
+            writeText(sudoScriptContent, Charsets.UTF_8)
             setExecutable(true, false)
             setReadable(true, false)
         }

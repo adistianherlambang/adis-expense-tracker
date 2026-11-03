@@ -391,6 +391,16 @@ class TerminalViewModel(
                 executeNativeProcess(session, finalCmd)
             }
 
+            "sudo" -> {
+                if (args.isEmpty()) {
+                    session.append("usage: sudo command [args...]\n")
+                    return
+                }
+                val subCmd = cmdLine.trim().removePrefix("sudo").trim()
+                session.append("[sudo] running in sandbox container (uid ${android.os.Process.myUid()}):\n")
+                sendCommand(subCmd)
+            }
+
             "ports" -> {
                 val servers = DevServerManager.activeServers.value
                 if (servers.isEmpty()) {
@@ -415,7 +425,7 @@ class TerminalViewModel(
                 when (action) {
                     "open" -> {
                         DevServerManager.openInBrowser(workspaceManager.appContext, portNum)
-                        session.append("Opened http://localhost:$portNum in browser.\n")
+                        session.append("Opened http://127.0.0.1:$portNum in browser.\n")
                     }
                     "stop", "kill" -> {
                         val stopped = DevServerManager.stopServer(portNum)
@@ -428,7 +438,7 @@ class TerminalViewModel(
                     "start" -> {
                         val res = DevServerManager.startServer(portNum, session.workingDir, session.workingDir.name)
                         if (res.isSuccess) {
-                            session.append("Started dev server on http://localhost:$portNum (directory: ${session.workingDir.name})\n")
+                            session.append("Started dev server on http://127.0.0.1:$portNum (directory: ${session.workingDir.name})\n")
                         } else {
                             session.append("Failed to start server on port $portNum: ${res.exceptionOrNull()?.message}\n")
                         }
@@ -450,9 +460,9 @@ class TerminalViewModel(
                 val portArg = args.firstOrNull()?.toIntOrNull()
                 if (portArg != null) {
                     DevServerManager.openInBrowser(workspaceManager.appContext, portArg)
-                    session.append("Opened http://localhost:$portArg in browser.\n")
+                    session.append("Opened http://127.0.0.1:$portArg in browser.\n")
                 } else {
-                    val url = args.firstOrNull() ?: "http://localhost:3000"
+                    val url = args.firstOrNull() ?: "http://127.0.0.1:3000"
                     try {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -471,8 +481,7 @@ class TerminalViewModel(
                 if (res.isSuccess) {
                     session.append(
                         "Serving '${session.workingDir.name}' at:\n" +
-                        "  ➜  Local:   http://localhost:$port/\n" +
-                        "  ➜  Network: http://localhost:$port/\n" +
+                        "  ➜  Local:   http://127.0.0.1:$port/ (http://localhost:$port/)\n" +
                         "Server running. Run 'port open $port' to view or 'port stop $port' to terminate.\n"
                     )
                 } else {
@@ -551,16 +560,23 @@ class TerminalViewModel(
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val currentPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
             val canonicalWorkDir = session.workingDir.canonicalFile.apply { if (!exists()) mkdirs() }
-            val effectiveCmd = NodeNativeBootstrap.rewriteCommandForAndroid(context, cmdLine, canonicalWorkDir)
+            val effectiveWorkDir = when {
+                File(canonicalWorkDir, "package.json").exists() -> canonicalWorkDir
+                File(canonicalWorkDir, "1/package.json").exists() -> File(canonicalWorkDir, "1").canonicalFile
+                else -> canonicalWorkDir.listFiles()?.firstOrNull { 
+                    it.isDirectory && File(it, "package.json").exists() 
+                }?.canonicalFile ?: canonicalWorkDir
+            }
+            val effectiveCmd = NodeNativeBootstrap.rewriteCommandForAndroid(context, cmdLine, effectiveWorkDir)
 
             val pb = ProcessBuilder("/system/bin/sh", "-c", effectiveCmd)
-            pb.directory(canonicalWorkDir)
+            pb.directory(effectiveWorkDir)
             val env = pb.environment()
-            val localBin = File(canonicalWorkDir, "node_modules/.bin")
+            val localBin = File(effectiveWorkDir, "node_modules/.bin")
             val localBinPath = if (localBin.exists()) "${localBin.absolutePath}:" else ""
             env["PATH"] = "$localBinPath${usrBin.absolutePath}:$currentPath"
             env["LD_LIBRARY_PATH"] = "$nativeLibDir:${env["LD_LIBRARY_PATH"] ?: ""}"
-            env["NODE_PATH"] = File(usrDir, "lib/node_modules").absolutePath + ":" + File(canonicalWorkDir, "node_modules").absolutePath
+            env["NODE_PATH"] = File(usrDir, "lib/node_modules").absolutePath + ":" + File(effectiveWorkDir, "node_modules").absolutePath
             env["NODE_OPTIONS"] = "--require ${shimFile.absolutePath}"
             env["MOBILE_CODE_USR_DIR"] = usrDir.absolutePath
             env["MOBILE_CODE_NPM_CLI"] = npmCliJs.absolutePath
@@ -587,7 +603,7 @@ class TerminalViewModel(
             env["BROWSER"] = "none"
             env["CI"] = "true"
             env["PORT"] = "3000"
-            env["HOST"] = "0.0.0.0"
+            env["HOST"] = "127.0.0.1"
             env["WDS_SOCKET_PORT"] = "0"
             env["WATCHPACK_POLLING"] = "true"
             env["CHOKIDAR_USEPOLLING"] = "true"

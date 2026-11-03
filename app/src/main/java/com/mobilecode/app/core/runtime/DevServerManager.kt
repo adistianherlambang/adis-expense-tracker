@@ -46,21 +46,30 @@ object DevServerManager {
         rootDir: File,
         name: String = "Dev Server"
     ): Result<DevServerInfo> {
-        if (isPortRunning(port)) {
-            val existing = _activeServers.value.find { it.port == port }
-            if (existing != null) return Result.success(existing)
+        if (port < 1024) {
+            return Result.failure(
+                IllegalArgumentException("Port $port is a privileged system port (< 1024) restricted by Android Linux kernel. Please use a port >= 1024 (e.g. 3000, 5173, 8000, 8080).")
+            )
+        }
+
+        if (runningSockets.containsKey(port)) {
             stopServer(port)
         }
 
         return try {
-            val serverSocket = ServerSocket(port)
+            val serverSocket = ServerSocket()
             serverSocket.reuseAddress = true
+            try {
+                serverSocket.bind(java.net.InetSocketAddress("127.0.0.1", port))
+            } catch (_: Exception) {
+                serverSocket.bind(java.net.InetSocketAddress("0.0.0.0", port))
+            }
             runningSockets[port] = serverSocket
 
             val info = DevServerInfo(
                 port = port,
                 rootDir = rootDir.canonicalFile,
-                url = "http://localhost:$port",
+                url = "http://127.0.0.1:$port",
                 startedAt = System.currentTimeMillis(),
                 name = name
             )
@@ -112,11 +121,18 @@ object DevServerManager {
         if (runningSockets.containsKey(port)) return true
         return try {
             Socket().use { s ->
-                s.connect(java.net.InetSocketAddress("127.0.0.1", port), 250)
+                s.connect(java.net.InetSocketAddress("127.0.0.1", port), 350)
                 true
             }
         } catch (_: Exception) {
-            false
+            try {
+                Socket().use { s ->
+                    s.connect(java.net.InetSocketAddress("localhost", port), 350)
+                    true
+                }
+            } catch (_: Exception) {
+                false
+            }
         }
     }
 
@@ -148,7 +164,7 @@ object DevServerManager {
 
     fun openInBrowser(context: Context, port: Int) {
         try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("http://localhost:$port")).apply {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:$port")).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
