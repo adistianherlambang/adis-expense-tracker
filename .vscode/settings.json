@@ -1,0 +1,7 @@
+{
+  "kotlin.scripts.buildScriptsEnabled": true,
+  "kotlin.indexing.exclude": [
+    "**/build/**",
+    "**/.gradle/**"
+  ]
+}
