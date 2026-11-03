@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.zip.GZIPInputStream
@@ -19,7 +20,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION_CODE = 11
+    private const val BOOTSTRAP_VERSION_CODE = 12
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -236,6 +237,48 @@ object NodeNativeBootstrap {
             setExecutable(true, false)
             setReadable(true, false)
         }
+
+        // 7. Create 'open' helper in $PATH for browser opening commands
+        val openScriptContent = """
+            #!/system/bin/sh
+            URL="${'$'}1"
+            if [ -n "${'$'}URL" ]; then
+                /system/bin/am start -a android.intent.action.VIEW -d "${'$'}URL" >/dev/null 2>&1 || true
+            fi
+            exit 0
+        """.trimIndent() + "\n"
+
+        File(usrBin, "open").apply {
+            writeText(openScriptContent, Charsets.UTF_8)
+            setExecutable(true, false)
+            setReadable(true, false)
+        }
+
+        // 8. Create 'tunnel' helper in $PATH for quick public internet tunneling
+        val tunnelScriptContent = """
+            #!/system/bin/sh
+            DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")/.." && pwd)"
+            LAUNCHER=""
+            if [ -f "${'$'}DIR/.native_launcher_path" ]; then
+                LAUNCHER="${'$'}(head -n 1 "${'$'}DIR/.native_launcher_path")"
+            fi
+            if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
+                LAUNCHER="${nativeNodeLauncher.absolutePath}"
+            fi
+            PORT="${'$'}{1:-3000}"
+            LT_JS="${'$'}DIR/lib/node_modules/localtunnel/bin/lt.js"
+            if [ ! -f "${'$'}LT_JS" ]; then
+                echo "Installing localtunnel..."
+                "${'$'}LAUNCHER" "${npmCliJs.absolutePath}" install -g localtunnel
+            fi
+            exec "${'$'}LAUNCHER" --require "${'$'}DIR/lib/android-shim.js" "${'$'}LT_JS" --port "${'$'}PORT"
+        """.trimIndent() + "\n"
+
+        File(usrBin, "tunnel").apply {
+            writeText(tunnelScriptContent, Charsets.UTF_8)
+            setExecutable(true, false)
+            setReadable(true, false)
+        }
     }
 
     private fun writeAndroidShim(shimFile: File) {
@@ -276,6 +319,16 @@ object NodeNativeBootstrap {
               } catch (e) {
                 try { process.execPath = NODE_EXEC; } catch (_) {}
               }
+
+              // Report process.platform as 'linux' so npm CLI tools (openurl, localtunnel, etc.) don't fail
+              try {
+                Object.defineProperty(process, 'platform', {
+                  value: 'linux',
+                  writable: true,
+                  configurable: true,
+                  enumerable: true
+                });
+              } catch (_) {}
 
               // 2. Prevent stdin EOF from terminating dev servers (e.g. react-scripts start.js line 149)
               const origStdinOn = process.stdin.on;
@@ -343,6 +396,25 @@ object NodeNativeBootstrap {
                         return true;
                       } catch (e) {
                         return false;
+                      }
+                    };
+                  }
+
+                  if (id.includes('openurl')) {
+                    return {
+                      open: function(url, callback) {
+                        if (url) {
+                          try {
+                            cp.spawn('/system/bin/am', ['start', '-a', 'android.intent.action.VIEW', '-d', url], {
+                              detached: true,
+                              stdio: 'ignore'
+                            });
+                          } catch (_) {}
+                        }
+                        if (typeof callback === 'function') callback();
+                      },
+                      mailto: function(recipients, fields, sep, cb) {
+                        if (typeof cb === 'function') cb();
                       }
                     };
                   }
@@ -866,6 +938,32 @@ object NodeNativeBootstrap {
         } catch (_: Exception) {}
     }
 
+    private fun isElfBinary(file: File): Boolean {
+        return try {
+            if (!file.exists() || file.isDirectory || file.length() < 4) return false
+            FileInputStream(file).use { fis ->
+                val buf = ByteArray(4)
+                val read = fis.read(buf)
+                read == 4 && buf[0] == 0x7f.toByte() && buf[1] == 'E'.code.toByte() && buf[2] == 'L'.code.toByte() && buf[3] == 'F'.code.toByte()
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun isNodeScript(file: File): Boolean {
+        return try {
+            if (!file.exists() || file.isDirectory) return false
+            if (file.name.endsWith(".js") || file.name.endsWith(".mjs") || file.name.endsWith(".cjs")) return true
+            file.bufferedReader().use { reader ->
+                val firstLine = reader.readLine() ?: ""
+                firstLine.startsWith("#!") && (firstLine.contains("node") || firstLine.contains("nodejs"))
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     /**
      * Rewrites top-level terminal invocations of node, nodejs, npm, npx, and create-react-app
      * so they directly execute the ELF binary in nativeLibraryDir without triggering SELinux
@@ -923,7 +1021,46 @@ object NodeNativeBootstrap {
 
                 "\"$launcher\" --require \"$shim\" \"${scriptFile.absolutePath}\"$rest"
             }
-            else -> cmdLine
+            else -> {
+                val usrBin = getUsrBin(context)
+                val usrBinFile = File(usrBin, bin)
+                val localBinFile = workingDir?.let { File(it, "node_modules/.bin/$bin") }
+                val targetFile = when {
+                    usrBinFile.exists() -> usrBinFile
+                    localBinFile?.exists() == true -> localBinFile
+                    else -> null
+                }
+
+                if (targetFile != null) {
+                    val canonicalTarget = targetFile.canonicalFile
+                    if (isElfBinary(canonicalTarget)) {
+                        val msg = if (bin == "ngrok") {
+                            "MobileCode: 'ngrok' adalah binary native (ELF) yang diblokir oleh Android SELinux (W^X).\n" +
+                            "Gunakan 'lt --port <port>' atau 'tunnel <port>' untuk membuat public URL / tunnel gratis:\n" +
+                            "  lt --port 3000 (atau: tunnel 3000)\n"
+                        } else {
+                            "MobileCode: '$bin' adalah binary native (ELF) yang diblokir oleh Android SELinux (W^X).\n"
+                        }
+                        return "printf '%s' \"$msg\""
+                    }
+
+                    if (canonicalTarget.name.endsWith(".js") || isNodeScript(canonicalTarget)) {
+                        return "\"$launcher\" --require \"$shim\" \"${canonicalTarget.absolutePath}\"$rest"
+                    }
+                }
+
+                if (bin == "tunnel") {
+                    val portArg = rest.trim().ifEmpty { "3000" }
+                    val ltJs = File(getUsrDir(context), "lib/node_modules/localtunnel/bin/lt.js")
+                    if (ltJs.exists()) {
+                        return "\"$launcher\" --require \"$shim\" \"${ltJs.absolutePath}\" --port $portArg"
+                    } else {
+                        return "\"$launcher\" \"$npmCli\" install -g localtunnel && \"$launcher\" --require \"$shim\" \"${ltJs.absolutePath}\" --port $portArg"
+                    }
+                }
+
+                cmdLine
+            }
         }
     }
 
