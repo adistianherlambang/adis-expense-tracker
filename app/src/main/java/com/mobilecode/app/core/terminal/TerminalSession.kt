@@ -67,6 +67,7 @@ class TerminalSession(
     private fun stripAnsiCodes(input: String): String {
         return input
             .replace(Regex("\u001B\\[[;\\d]*[ -/]*[@-~]"), "")
+            .replace(Regex("""(?m)^warning: linker:.*\R?"""), "")
             .replace("\r\n", "\n")
     }
 }

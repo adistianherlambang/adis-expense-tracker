@@ -157,11 +157,6 @@ fun TerminalWebView(
 
         if (endsWithNewline) {
             terminalViewModel.updateCommandInput("")
-            val newFull = prefixText
-            textFieldValue = TextFieldValue(
-                text = newFull,
-                selection = TextRange(newFull.length)
-            )
         }
     }
 
@@ -185,6 +180,7 @@ fun TerminalWebView(
                 selection = TextRange(expected.length)
             )
         }
+        kotlinx.coroutines.yield()
         verticalScrollState.scrollTo(verticalScrollState.maxValue)
     }
 
