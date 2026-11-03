@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.mobilecode.app.core.filesystem.WorkspaceManager
 import com.mobilecode.app.core.git.GitClient
 import com.mobilecode.app.core.runtime.DevServerManager
+import com.mobilecode.app.core.runtime.NodeNativeBootstrap
 import com.mobilecode.app.core.runtime.NodeRuntimeEngine
 import com.mobilecode.app.core.runtime.PythonRuntimeEngine
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,10 @@ class TerminalViewModel(
 
     init {
         createSession()
+
+        viewModelScope.launch {
+            NodeNativeBootstrap.ensureInitialized(workspaceManager.appContext)
+        }
 
         // Sync terminal working directory when user opens or switches workspace project
         viewModelScope.launch {
@@ -158,10 +163,10 @@ class TerminalViewModel(
         _activeSessionIndex.value = updated.size - 1
 
         newSession.append(
-            "Mobile Code Linux Environment (Android ARM64)\n" +
-            "Runtimes installed: Node.js ${NodeRuntimeEngine.NODE_VERSION} | npm ${NodeRuntimeEngine.NPM_VERSION} | ${PythonRuntimeEngine.PYTHON_VERSION} | Git 2.44.0\n" +
+            "Mobile Code Linux Runtime Environment (Real Node.js ARM64)\n" +
+            "Runtimes: Native Node.js (V8 C++) | Official NPM | Python 3 | Git\n" +
             "Working directory: ${workingDir.absolutePath}\n" +
-            "Type commands below (e.g. 'node -v', 'python --version', 'ls -la', 'npm init -y')\n\n"
+            "Type commands below (e.g. 'node -v', 'npm -v', 'npm install <pkg>', 'ls -la')\n\n"
         )
 
         OutputLogger.logSystem("Started terminal session: ${newSession.title}")
@@ -351,22 +356,25 @@ class TerminalViewModel(
                 )
             }
 
-            "node", "nodejs" -> {
-                if (args.isEmpty()) {
-                    session.replMode = "NODE"
-                    nodeEngine.executeNodeCommand(emptyList(), session.workingDir) { session.append(it) }
+            "node", "nodejs", "npm", "npx", "create-react-app" -> {
+                val context = workspaceManager.appContext
+                if (NodeNativeBootstrap.isNativeNodeAvailable(context)) {
+                    executeNativeProcess(session, cmdLine)
                 } else {
-                    nodeEngine.executeNodeCommand(args, session.workingDir) { session.append(it) }
+                    if (binary == "node" || binary == "nodejs") {
+                        if (args.isEmpty()) {
+                            session.replMode = "NODE"
+                            nodeEngine.executeNodeCommand(emptyList(), session.workingDir) { session.append(it) }
+                        } else {
+                            nodeEngine.executeNodeCommand(args, session.workingDir) { session.append(it) }
+                        }
+                    } else if (binary == "create-react-app") {
+                        val appName = args.firstOrNull { !it.startsWith("-") } ?: "my-react-app"
+                        nodeEngine.executeNpmCommand(listOf("create-react-app", appName), session.workingDir) { session.append(it) }
+                    } else {
+                        nodeEngine.executeNpmCommand(args, session.workingDir) { session.append(it) }
+                    }
                 }
-            }
-
-            "npm", "npx" -> {
-                nodeEngine.executeNpmCommand(args, session.workingDir) { session.append(it) }
-            }
-
-            "create-react-app" -> {
-                val appName = args.firstOrNull { !it.startsWith("-") } ?: "my-react-app"
-                nodeEngine.executeNpmCommand(listOf("create-react-app", appName), session.workingDir) { session.append(it) }
             }
 
             "ports" -> {
@@ -508,31 +516,40 @@ class TerminalViewModel(
             }
 
             else -> {
-                // Execute real Android/Linux command via /system/bin/sh in session.workingDir
-                val out = withContext(Dispatchers.IO) {
-                    try {
-                        val pb = ProcessBuilder("/system/bin/sh", "-c", cmdLine)
-                        pb.directory(session.workingDir)
-                        val env = pb.environment()
-                        env["HOME"] = session.workingDir.absolutePath
-                        env["SANDBOX_ROOT"] = workspaceManager.getSandboxRoot().absolutePath
-                        env["TMPDIR"] = workspaceManager.getSandboxTmpDirectory().absolutePath
-                        env["NODE_PATH"] = File(session.workingDir, "node_modules").absolutePath
-                        env["PYTHONPATH"] = File(session.workingDir, "site-packages").absolutePath
-                        env["TERM"] = "xterm-256color"
-                        pb.redirectErrorStream(true)
-                        val proc = pb.start()
-                        val text = proc.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                        proc.waitFor()
-                        text
-                    } catch (e: Exception) {
-                        "sh: ${e.message}\n"
-                    }
-                }
-                if (out.isNotEmpty()) {
-                    session.append(if (out.endsWith("\n")) out else "$out\n")
-                }
+                executeNativeProcess(session, cmdLine)
             }
+        }
+    }
+
+    private suspend fun executeNativeProcess(session: TerminalSession, cmdLine: String) = withContext(Dispatchers.IO) {
+        try {
+            val context = workspaceManager.appContext
+            val usrBin = NodeNativeBootstrap.getUsrBin(context)
+            val nativeLibDir = context.applicationInfo.nativeLibraryDir
+            val currentPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
+
+            val pb = ProcessBuilder("/system/bin/sh", "-c", cmdLine)
+            pb.directory(session.workingDir)
+            val env = pb.environment()
+            env["PATH"] = "${usrBin.absolutePath}:$currentPath"
+            env["LD_LIBRARY_PATH"] = "$nativeLibDir:${env["LD_LIBRARY_PATH"] ?: ""}"
+            env["NODE_PATH"] = File(context.filesDir, "usr/lib/node_modules").absolutePath + ":" + File(session.workingDir, "node_modules").absolutePath
+            env["HOME"] = session.workingDir.absolutePath
+            env["SANDBOX_ROOT"] = workspaceManager.getSandboxRoot().absolutePath
+            env["TMPDIR"] = workspaceManager.getSandboxTmpDirectory().absolutePath
+            env["TERM"] = "xterm-256color"
+
+            pb.redirectErrorStream(true)
+            val proc = pb.start()
+
+            val reader = proc.inputStream.bufferedReader(Charsets.UTF_8)
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                session.append("$line\n")
+            }
+            proc.waitFor()
+        } catch (e: Exception) {
+            session.append("sh: ${e.message}\n")
         }
     }
 

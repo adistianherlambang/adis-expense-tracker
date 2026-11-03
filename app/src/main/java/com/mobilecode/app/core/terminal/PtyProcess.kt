@@ -35,7 +35,14 @@ class PtyProcess(
             val tmpDir = File(workingDir.parentFile ?: workingDir, "tmp").apply { if (!exists()) mkdirs() }
             env["TMPDIR"] = tmpDir.absolutePath
             val currentPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
-            env["PATH"] = "$currentPath:/data/data/com.mobilecode.app/files/usr/bin"
+            val filesPath = if (workingDir.absolutePath.contains("/files")) {
+                workingDir.absolutePath.substringBefore("/files") + "/files"
+            } else {
+                "/data/data/com.mobilecode.app/files"
+            }
+            val usrBin = "$filesPath/usr/bin"
+            env["PATH"] = "$usrBin:$currentPath"
+            env["NODE_PATH"] = "$filesPath/usr/lib/node_modules"
 
             builder.redirectErrorStream(true)
             val proc = builder.start()
