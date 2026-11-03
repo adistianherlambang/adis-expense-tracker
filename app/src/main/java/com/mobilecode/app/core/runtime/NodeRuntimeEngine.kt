@@ -47,8 +47,7 @@ class NodeRuntimeEngine(
 
         @JavascriptInterface
         fun resolvePath(relativePath: String): String {
-            val f = File(relativePath)
-            return if (f.isAbsolute) f.canonicalPath else File(currentWorkingDir, relativePath).canonicalPath
+            return resolveFile(relativePath).canonicalPath
         }
 
         @JavascriptInterface
@@ -165,8 +164,16 @@ class NodeRuntimeEngine(
         fun randomUUID(): String = UUID.randomUUID().toString()
 
         private fun resolveFile(path: String): File {
-            val f = File(path)
-            return if (f.isAbsolute) f else File(currentWorkingDir, path)
+            val sandboxRoot = context.filesDir.canonicalFile
+            val raw = File(path)
+            val candidate = (if (raw.isAbsolute) raw else File(currentWorkingDir, path)).canonicalFile
+            val sandboxPrefix = "${sandboxRoot.canonicalPath}${File.separator}"
+            return if (candidate.canonicalPath == sandboxRoot.canonicalPath || candidate.canonicalPath.startsWith(sandboxPrefix)) {
+                candidate
+            } else {
+                // Confine out-of-bounds paths strictly to currentWorkingDir inside the sandbox
+                File(currentWorkingDir, raw.name).canonicalFile
+            }
         }
     }
 

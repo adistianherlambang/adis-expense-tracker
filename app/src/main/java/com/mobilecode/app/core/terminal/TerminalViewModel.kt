@@ -293,7 +293,7 @@ class TerminalViewModel(
 
             "cd" -> {
                 val targetArg = args.firstOrNull() ?: "~"
-                val newDir = when (targetArg) {
+                val candidateDir = when (targetArg) {
                     "~" -> workspaceManager.currentWorkspaceDir.value ?: workspaceManager.getWorkspacesDirectory()
                     ".." -> session.workingDir.parentFile ?: session.workingDir
                     "." -> session.workingDir
@@ -302,11 +302,28 @@ class TerminalViewModel(
                         if (candidate.isAbsolute) candidate else File(session.workingDir, targetArg)
                     }
                 }
-                if (newDir.exists() && newDir.isDirectory) {
-                    session.workingDir = newDir.canonicalFile
+                if (!workspaceManager.isInsideSandbox(candidateDir)) {
+                    session.append("cd: permission denied: path '${targetArg}' is outside isolated sandbox (${workspaceManager.getSandboxRoot().absolutePath})\n")
+                } else if (candidateDir.exists() && candidateDir.isDirectory) {
+                    session.workingDir = candidateDir.canonicalFile
                 } else {
                     session.append("cd: no such file or directory: $targetArg\n")
                 }
+            }
+
+            "sandbox" -> {
+                val sandboxRoot = workspaceManager.getSandboxRoot()
+                val tmpDir = workspaceManager.getSandboxTmpDirectory()
+                val wsDir = workspaceManager.currentWorkspaceDir.value
+                session.append(
+                    "Sandbox Isolation Status: ACTIVE (Strict Path Confinement)\n" +
+                    "  SANDBOX_ROOT : ${sandboxRoot.absolutePath}\n" +
+                    "  WORKSPACES   : ${workspaceManager.getWorkspacesDirectory().absolutePath}\n" +
+                    "  TMPDIR       : ${tmpDir.absolutePath}\n" +
+                    "  CURRENT_WS   : ${wsDir?.absolutePath ?: "(none)"}\n" +
+                    "  WORKING_DIR  : ${session.workingDir.absolutePath}\n" +
+                    "  CONFINED     : ${workspaceManager.isInsideSandbox(session.workingDir)}\n"
+                )
             }
 
             "node", "nodejs" -> {
@@ -379,6 +396,10 @@ class TerminalViewModel(
                         pb.directory(session.workingDir)
                         val env = pb.environment()
                         env["HOME"] = session.workingDir.absolutePath
+                        env["SANDBOX_ROOT"] = workspaceManager.getSandboxRoot().absolutePath
+                        env["TMPDIR"] = workspaceManager.getSandboxTmpDirectory().absolutePath
+                        env["NODE_PATH"] = File(session.workingDir, "node_modules").absolutePath
+                        env["PYTHONPATH"] = File(session.workingDir, "site-packages").absolutePath
                         env["TERM"] = "xterm-256color"
                         pb.redirectErrorStream(true)
                         val proc = pb.start()
