@@ -561,6 +561,10 @@ class TerminalViewModel(
             "git" -> {
                 val res = gitClient.runGitRaw(session.workingDir, args)
                 session.append(res)
+                val sub = args.getOrNull(0)
+                if (sub == "clone" || sub == "init" || sub == "pull") {
+                    workspaceManager.refreshTree()
+                }
             }
 
             "help" -> {
@@ -568,6 +572,7 @@ class TerminalViewModel(
                     "Mobile Code Linux Shell Commands:\n" +
                     "  test-port [port]            Test dev server port binding (e.g. test-port 3000)\n" +
                     "  serve [port]                Start local dev server on port (e.g. serve 3000)\n" +
+                    "  tunnel [port]               Create public URL to local server (e.g. tunnel 3000)\n" +
                     "  ports                       List all active dev servers & forwarded ports\n" +
                     "  port [open|stop|start|test] Control specific dev server port\n" +
                     "  node [file.js] / node       Run Node.js script or interactive V8 REPL\n" +
@@ -575,7 +580,7 @@ class TerminalViewModel(
                     "  python [file.py] / python3  Run Python 3 script or interactive REPL\n" +
                     "  pip [install|list|freeze]   Python Package Installer\n" +
                     "  sudo [command...]           Run command in sandbox container\n" +
-                    "  git [init|status|add|commit] Git version control\n" +
+                    "  git [clone|init|status|add|commit|pull] Git version control\n" +
                     "  ls, cd, pwd, cat, mkdir, rm, cp, mv, touch, grep, find, uname, ps, df, clear\n"
                 )
             }
