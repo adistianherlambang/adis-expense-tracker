@@ -19,7 +19,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION = 10
+    private const val BOOTSTRAP_VERSION = 11
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -52,6 +52,7 @@ object NodeNativeBootstrap {
             // Always ensure android-shim.js and wrapper scripts are synchronized with the active APK installation
             writeAndroidShim(shimFile)
             writeWrapperScripts(usrDir, usrBin, usrLib, nativeLibDir, nativeNodeLauncher, npmDir)
+            patchWorkspaceModules(File(filesDir, "workspaces"))
 
             val npmCliJs = File(npmDir, "bin/npm-cli.js")
             if (markerFile.exists() && npmCliJs.exists()) {
@@ -358,7 +359,110 @@ object NodeNativeBootstrap {
                   }
                 }
 
-                return origRequire.apply(this, arguments);
+                try {
+                  return origRequire.apply(this, arguments);
+                } catch (err) {
+                  if (err && err.code === 'MODULE_NOT_FOUND' && typeof id === 'string' && id.startsWith('ajv')) {
+                    const rel = id.replace(/^ajv\/?/, '');
+                    const currentFileDir = this.filename ? path.dirname(this.filename) : (this.path || process.cwd());
+                    const candidates = [
+                      path.resolve(currentFileDir, '../schema-utils/node_modules/ajv', rel),
+                      path.resolve(currentFileDir, '../../schema-utils/node_modules/ajv', rel),
+                      path.resolve(currentFileDir, '../../../schema-utils/node_modules/ajv', rel),
+                      path.resolve(process.cwd(), 'node_modules/schema-utils/node_modules/ajv', rel),
+                      path.resolve(process.cwd(), 'node_modules/workbox-build/node_modules/ajv', rel)
+                    ];
+                    for (let i = 0; i < candidates.length; i++) {
+                      try {
+                        return origRequire.call(this, candidates[i]);
+                      } catch (_) {}
+                    }
+                  }
+                  throw err;
+                }
+              };
+
+              // 4. Unicode regex fix for Node without full ICU tables (e.g. fast-uri /\P{ASCII}/u, Webpack 5 /\p{L}/u)
+              function sanitizeUnicodeRegex(str) {
+                if (!str.includes('\\p{') && !str.includes('\\P{')) return str;
+                return str
+                  .replaceAll('\\P{ASCII}', '[^\\x00-\\x7F]')
+                  .replaceAll('\\p{ASCII}', '[\\x00-\\x7F]')
+                  .replaceAll('\\p{Uppercase_Letter}', 'A-Z')
+                  .replaceAll('\\p{Lowercase_Letter}', 'a-z')
+                  .replaceAll('\\p{Lu}', 'A-Z')
+                  .replaceAll('\\p{Ll}', 'a-z')
+                  .replaceAll('\\p{Lt}', 'A-Z')
+                  .replaceAll('\\p{Alpha}', 'a-zA-Z')
+                  .replaceAll('\\p{L}', 'a-zA-Z')
+                  .replaceAll('\\p{Nl}', '0-9')
+                  .replaceAll('\\p{Nd}', '0-9')
+                  .replaceAll('\\p{N}', '0-9')
+                  .replaceAll('\\p{Mn}', '')
+                  .replaceAll('\\p{Mc}', '')
+                  .replaceAll('\\p{Me}', '')
+                  .replaceAll('\\p{Pc}', '_')
+                  .replaceAll('\\p{Space_Separator}', ' ')
+                  .replaceAll('\\p{ID_Start}', 'a-zA-Z${'$'}_')
+                  .replaceAll('\\p{ID_Continue}', 'a-zA-Z0-9${'$'}_')
+                  .replaceAll('\\p{Emoji}', 'a-zA-Z0-9')
+                  .replaceAll('\\p{Extended_Pictographic}', 'a-zA-Z0-9');
+              }
+
+              const origJsExtension = mod._extensions['.js'];
+              mod._extensions['.js'] = function(module, filename) {
+                if (typeof filename === 'string' && (filename.includes('node_modules') || filename.includes('fast-uri') || filename.includes('webpack'))) {
+                  try {
+                    let content = fs.readFileSync(filename, 'utf8');
+                    if (content.includes('\\p{') || content.includes('\\P{')) {
+                      content = sanitizeUnicodeRegex(content);
+                      module._compile(content, filename);
+                      return;
+                    }
+                  } catch (e) {}
+                }
+                return origJsExtension.call(this, module, filename);
+              };
+              if (mod._extensions['.cjs']) {
+                const origCjsExtension = mod._extensions['.cjs'];
+                mod._extensions['.cjs'] = function(module, filename) {
+                  if (typeof filename === 'string' && (filename.includes('node_modules') || filename.includes('fast-uri') || filename.includes('webpack'))) {
+                    try {
+                      let content = fs.readFileSync(filename, 'utf8');
+                      if (content.includes('\\p{') || content.includes('\\P{')) {
+                        content = sanitizeUnicodeRegex(content);
+                        module._compile(content, filename);
+                        return;
+                      }
+                    } catch (e) {}
+                  }
+                  return origCjsExtension.call(this, module, filename);
+                };
+              }
+
+              // 5. Watchpack / fs.watch guard for Android system directories
+              const origWatch = fs.watch;
+              fs.watch = function(filename, options, listener) {
+                const p = String(filename);
+                if (p === '/' || p === '/data' || p === '/data/user' || p === '/data/user/0' || p === '/data/data') {
+                  const dummy = new (require('events').EventEmitter)();
+                  dummy.close = function() {};
+                  dummy.ref = function() { return this; };
+                  dummy.unref = function() { return this; };
+                  return dummy;
+                }
+                try {
+                  return origWatch.apply(this, arguments);
+                } catch (err) {
+                  if (err && (err.code === 'EACCES' || err.code === 'EPERM')) {
+                    const dummy = new (require('events').EventEmitter)();
+                    dummy.close = function() {};
+                    dummy.ref = function() { return this; };
+                    dummy.unref = function() { return this; };
+                    return dummy;
+                  }
+                  throw err;
+                }
               };
 
               const USR_DIR = process.env.MOBILE_CODE_USR_DIR || path.resolve(process.env.HOME || '/', '../usr');
@@ -368,10 +472,17 @@ object NodeNativeBootstrap {
               const ANDROID_SH = fs.existsSync('/system/bin/sh') ? '/system/bin/sh' : '/bin/sh';
 
               process.on('uncaughtException', (err) => {
-                try { console.error("[NODE_ERROR] Uncaught exception:", err); } catch (_) {}
+                try {
+                  const msg = (err && err.stack) ? err.stack : String(err);
+                  process.stderr.write("[NODE_ERROR] Uncaught exception:\n" + msg + "\n");
+                } catch (_) {}
+                process.exit(1);
               });
               process.on('unhandledRejection', (reason) => {
-                try { console.error("[NODE_ERROR] Unhandled rejection:", reason); } catch (_) {}
+                try {
+                  const msg = (reason && reason.stack) ? reason.stack : String(reason);
+                  process.stderr.write("[NODE_ERROR] Unhandled rejection:\n" + msg + "\n");
+                } catch (_) {}
               });
 
               function getPathFromEnvPairs(envPairs) {
@@ -599,8 +710,6 @@ object NodeNativeBootstrap {
                     options.args = [NODE_EXEC, '--require', SHIM_FILE, startScript];
                     return options;
                   }
-                    return options;
-                  }
 
                   let binScript = path.resolve(cwd, 'node_modules/react-scripts/bin/react-scripts.js');
                   if (!fs.existsSync(binScript)) {
@@ -736,6 +845,25 @@ object NodeNativeBootstrap {
 
     fun isNativeNodeAvailable(context: Context): Boolean {
         return getNativeNodeLauncher(context).exists()
+    }
+
+    fun patchWorkspaceModules(workspacesDir: File) {
+        try {
+            if (!workspacesDir.exists()) return
+            workspacesDir.walkTopDown().maxDepth(6).forEach { file ->
+                if (file.name == "index.js" && file.parentFile?.name == "fast-uri") {
+                    val text = file.readText(Charsets.UTF_8)
+                    if (text.contains("\\P{ASCII}")) {
+                        file.writeText(text.replace("\\P{ASCII}", "[^\\x00-\\x7F]"), Charsets.UTF_8)
+                    }
+                } else if (file.name == "index.js" && file.parentFile?.name == "camelcase") {
+                    val text = file.readText(Charsets.UTF_8)
+                    if (text.contains("\\p{Lu}")) {
+                        file.writeText(text.replace("\\p{Lu}", "A-Z"), Charsets.UTF_8)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     /**

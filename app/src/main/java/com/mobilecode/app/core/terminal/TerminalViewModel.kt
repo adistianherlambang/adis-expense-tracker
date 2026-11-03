@@ -647,7 +647,7 @@ class TerminalViewModel(
 
             // Dev server environment variables to prevent hanging on browser open or port prompts
             env["BROWSER"] = "none"
-            env["CI"] = "true"
+            env["CI"] = "false"
             env["PORT"] = "3000"
             env["HOST"] = "127.0.0.1"
             env["WDS_SOCKET_PORT"] = "0"

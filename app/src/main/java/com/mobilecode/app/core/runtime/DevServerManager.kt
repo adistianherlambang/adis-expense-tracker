@@ -159,6 +159,14 @@ object DevServerManager {
                         else -> "Live Dev Server"
                     }
                     registerExternalPort(p, label, rootDir ?: File("."))
+                } else if (!runningSockets.containsKey(p)) {
+                    _activeServers.value = _activeServers.value.filter { it.port != p }
+                }
+            }
+            val staleExternal = _activeServers.value.filter { !runningSockets.containsKey(it.port) }
+            for (info in staleExternal) {
+                if (!isPortListeningLocally(info.port)) {
+                    _activeServers.value = _activeServers.value.filter { it.port != info.port }
                 }
             }
         }
