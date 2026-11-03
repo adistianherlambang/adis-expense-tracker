@@ -19,7 +19,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION = 11
+    private const val BOOTSTRAP_VERSION_CODE = 11
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -30,7 +30,7 @@ object NodeNativeBootstrap {
             val usrLib = File(usrDir, "lib")
             val npmDir = File(usrLib, "node_modules/npm")
             val shimFile = File(usrLib, "android-shim.js")
-            val markerFile = File(usrDir, ".bootstrap_v$BOOTSTRAP_VERSION")
+            val markerFile = File(usrDir, ".bootstrap_v$BOOTSTRAP_VERSION_CODE")
 
             usrBin.mkdirs()
             usrLib.mkdirs()
