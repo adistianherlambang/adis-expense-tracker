@@ -75,6 +75,10 @@ fun MainScreen(
     val commandList = remember {
         listOf(
             PaletteCommand("new_window", "New Window", "Window", "Ctrl+N / Cmd+N") { onOpenNewWindow() },
+            PaletteCommand("verify_env", "Run Environment Verification Task", "Tasks") {
+                isBottomPanelVisible = true
+                terminalViewModel.sendCommand("verify-env")
+            },
             PaletteCommand("save", "Save", "File", "Ctrl+S") { editorViewModel.saveActiveFile() },
             PaletteCommand("save_all", "Save All", "File") { editorViewModel.saveAll() },
             PaletteCommand("toggle_term", "Toggle Terminal", "View", "Ctrl+`") { isBottomPanelVisible = !isBottomPanelVisible },
