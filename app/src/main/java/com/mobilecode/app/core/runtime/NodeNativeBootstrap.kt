@@ -19,7 +19,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION = 4
+    private const val BOOTSTRAP_VERSION = 5
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -32,105 +32,36 @@ object NodeNativeBootstrap {
             val shimFile = File(usrLib, "android-shim.js")
             val markerFile = File(usrDir, ".bootstrap_v$BOOTSTRAP_VERSION")
 
-            // Always ensure android-shim.js and wrapper scripts are up-to-date
             usrBin.mkdirs()
             usrLib.mkdirs()
-            writeAndroidShim(shimFile)
 
-            if (markerFile.exists() && File(usrBin, "node").exists() && File(npmDir, "bin/npm-cli.js").exists()) {
+            // 1. Locate native executable compiled into APK native library directory
+            val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
+            val nativeNodeLauncher = File(nativeLibDir, "libnode_launcher.so")
+
+            // Persist current active launcher path in a dynamic reference file
+            val launcherRef = File(usrDir, ".native_launcher_path")
+            launcherRef.writeText(nativeNodeLauncher.absolutePath, Charsets.UTF_8)
+
+            // Remove legacy / stale wrapper scripts (such as old create-react-app script)
+            val legacyCra = File(usrBin, "create-react-app")
+            if (legacyCra.exists()) {
+                legacyCra.delete()
+            }
+
+            // Always ensure android-shim.js and wrapper scripts are synchronized with the active APK installation
+            writeAndroidShim(shimFile)
+            writeWrapperScripts(usrDir, usrBin, usrLib, nativeLibDir, nativeNodeLauncher, npmDir)
+
+            val npmCliJs = File(npmDir, "bin/npm-cli.js")
+            if (markerFile.exists() && npmCliJs.exists()) {
                 return@withLock
             }
 
             onProgress?.invoke("Initializing Native Linux Node.js & NPM environment...\n")
             npmDir.mkdirs()
 
-            // 1. Locate native executable compiled into APK native library directory
-            val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
-            val nativeNodeLauncher = File(nativeLibDir, "libnode_launcher.so")
-
-            // 2. Create 'node' & 'nodejs' wrapper script in $PATH
-            val nodeScript = File(usrBin, "node")
-            val nodeScriptContent = """
-                #!/system/bin/sh
-                export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
-                if [ -z "${'$'}NODE_PATH" ]; then
-                    export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
-                fi
-                exec "${nativeNodeLauncher.absolutePath}" "$@"
-            """.trimIndent() + "\n"
-            nodeScript.writeText(nodeScriptContent, Charsets.UTF_8)
-            nodeScript.setExecutable(true, false)
-            nodeScript.setReadable(true, false)
-
-            val nodejsScript = File(usrBin, "nodejs")
-            nodejsScript.writeText(nodeScriptContent, Charsets.UTF_8)
-            nodejsScript.setExecutable(true, false)
-            nodejsScript.setReadable(true, false)
-
-            // 3. Create 'npm' wrapper script in $PATH
-            val npmCliJs = File(npmDir, "bin/npm-cli.js")
-            val npmScript = File(usrBin, "npm")
-            val npmScriptContent = """
-                #!/system/bin/sh
-                DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")" && pwd)"
-                export PATH="${'$'}DIR:${'$'}PATH"
-                export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
-                export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
-                export npm_config_scripts_prepend_node_path=true
-                export npm_config_update_notifier=false
-                exec "${nativeNodeLauncher.absolutePath}" "${npmCliJs.absolutePath}" "$@"
-            """.trimIndent() + "\n"
-            npmScript.writeText(npmScriptContent, Charsets.UTF_8)
-            npmScript.setExecutable(true, false)
-            npmScript.setReadable(true, false)
-
-            // 4. Create 'npx' wrapper script in $PATH
-            val npxCliJs = File(npmDir, "bin/npx-cli.js")
-            val npxScript = File(usrBin, "npx")
-            val npxScriptContent = """
-                #!/system/bin/sh
-                DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")" && pwd)"
-                export PATH="${'$'}DIR:${'$'}PATH"
-                export LD_LIBRARY_PATH="${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
-                export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
-                export npm_config_scripts_prepend_node_path=true
-                export npm_config_update_notifier=false
-                exec "${nativeNodeLauncher.absolutePath}" "${npxCliJs.absolutePath}" "$@"
-            """.trimIndent() + "\n"
-            npxScript.writeText(npxScriptContent, Charsets.UTF_8)
-            npxScript.setExecutable(true, false)
-            npxScript.setReadable(true, false)
-
-            // 5. Create 'create-react-app' wrapper script in $PATH
-            val craScript = File(usrBin, "create-react-app")
-            val craScriptContent = """
-                #!/system/bin/sh
-                exec "${nativeNodeLauncher.absolutePath}" "${npxCliJs.absolutePath}" --yes create-react-app "$@"
-            """.trimIndent() + "\n"
-            craScript.writeText(craScriptContent, Charsets.UTF_8)
-            craScript.setExecutable(true, false)
-            craScript.setReadable(true, false)
-
-            // 6. Create 'env' helper in $PATH
-            val envScript = File(usrBin, "env")
-            val envScriptContent = """
-                #!/system/bin/sh
-                if [ "${'$'}1" = "node" ]; then
-                    shift
-                    exec "${nativeNodeLauncher.absolutePath}" "$@"
-                elif [ -n "${'$'}1" ]; then
-                    cmd="${'$'}1"
-                    shift
-                    exec "${'$'}cmd" "$@"
-                else
-                    /system/bin/printenv
-                fi
-            """.trimIndent() + "\n"
-            envScript.writeText(envScriptContent, Charsets.UTF_8)
-            envScript.setExecutable(true, false)
-            envScript.setReadable(true, false)
-
-            // 7. Extract official NPM distribution tarball from assets if not yet extracted
+            // Extract official NPM distribution tarball from assets if not yet extracted
             if (!npmCliJs.exists()) {
                 try {
                     context.assets.open("npm.tgz").use { assetIn ->
@@ -146,6 +77,129 @@ object NodeNativeBootstrap {
             // Mark initialization complete
             markerFile.writeText("OK", Charsets.UTF_8)
             onProgress?.invoke("Native Linux Node.js environment ready.\n")
+        }
+    }
+
+    private fun writeWrapperScripts(
+        usrDir: File,
+        usrBin: File,
+        usrLib: File,
+        nativeLibDir: File,
+        nativeNodeLauncher: File,
+        npmDir: File
+    ) {
+        val npmCliJs = File(npmDir, "bin/npm-cli.js")
+        val npxCliJs = File(npmDir, "bin/npx-cli.js")
+
+        // 1. Create 'node' & 'nodejs' wrapper scripts in $PATH
+        val nodeScriptContent = """
+            #!/system/bin/sh
+            DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")/.." && pwd)"
+            LAUNCHER=""
+            if [ -f "${'$'}DIR/.native_launcher_path" ]; then
+                LAUNCHER="${'$'}(head -n 1 "${'$'}DIR/.native_launcher_path")"
+            fi
+            if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
+                LAUNCHER="${nativeNodeLauncher.absolutePath}"
+            fi
+            LIB_DIR="${'$'}(dirname "${'$'}LAUNCHER")"
+            export LD_LIBRARY_PATH="${'$'}LIB_DIR:${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
+            if [ -z "${'$'}NODE_PATH" ]; then
+                export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
+            fi
+            exec "${'$'}LAUNCHER" "$@"
+        """.trimIndent() + "\n"
+
+        File(usrBin, "node").apply {
+            writeText(nodeScriptContent, Charsets.UTF_8)
+            setExecutable(true, false)
+            setReadable(true, false)
+        }
+        File(usrBin, "nodejs").apply {
+            writeText(nodeScriptContent, Charsets.UTF_8)
+            setExecutable(true, false)
+            setReadable(true, false)
+        }
+
+        // 2. Create 'npm' wrapper script in $PATH
+        val npmScriptContent = """
+            #!/system/bin/sh
+            DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")/.." && pwd)"
+            LAUNCHER=""
+            if [ -f "${'$'}DIR/.native_launcher_path" ]; then
+                LAUNCHER="${'$'}(head -n 1 "${'$'}DIR/.native_launcher_path")"
+            fi
+            if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
+                LAUNCHER="${nativeNodeLauncher.absolutePath}"
+            fi
+            LIB_DIR="${'$'}(dirname "${'$'}LAUNCHER")"
+            export PATH="${'$'}DIR/bin:${'$'}PATH"
+            export LD_LIBRARY_PATH="${'$'}LIB_DIR:${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
+            export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
+            export npm_config_scripts_prepend_node_path=true
+            export npm_config_update_notifier=false
+            exec "${'$'}LAUNCHER" "${npmCliJs.absolutePath}" "$@"
+        """.trimIndent() + "\n"
+
+        File(usrBin, "npm").apply {
+            writeText(npmScriptContent, Charsets.UTF_8)
+            setExecutable(true, false)
+            setReadable(true, false)
+        }
+
+        // 3. Create 'npx' wrapper script in $PATH
+        val npxScriptContent = """
+            #!/system/bin/sh
+            DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")/.." && pwd)"
+            LAUNCHER=""
+            if [ -f "${'$'}DIR/.native_launcher_path" ]; then
+                LAUNCHER="${'$'}(head -n 1 "${'$'}DIR/.native_launcher_path")"
+            fi
+            if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
+                LAUNCHER="${nativeNodeLauncher.absolutePath}"
+            fi
+            LIB_DIR="${'$'}(dirname "${'$'}LAUNCHER")"
+            export PATH="${'$'}DIR/bin:${'$'}PATH"
+            export LD_LIBRARY_PATH="${'$'}LIB_DIR:${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
+            export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
+            export npm_config_scripts_prepend_node_path=true
+            export npm_config_update_notifier=false
+            exec "${'$'}LAUNCHER" "${npxCliJs.absolutePath}" "$@"
+        """.trimIndent() + "\n"
+
+        File(usrBin, "npx").apply {
+            writeText(npxScriptContent, Charsets.UTF_8)
+            setExecutable(true, false)
+            setReadable(true, false)
+        }
+
+        // 4. Create 'env' helper in $PATH
+        val envScriptContent = """
+            #!/system/bin/sh
+            DIR="${'$'}(cd "${'$'}(dirname "${'$'}0")/.." && pwd)"
+            LAUNCHER=""
+            if [ -f "${'$'}DIR/.native_launcher_path" ]; then
+                LAUNCHER="${'$'}(head -n 1 "${'$'}DIR/.native_launcher_path")"
+            fi
+            if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
+                LAUNCHER="${nativeNodeLauncher.absolutePath}"
+            fi
+            if [ "${'$'}1" = "node" ]; then
+                shift
+                exec "${'$'}LAUNCHER" "$@"
+            elif [ -n "${'$'}1" ]; then
+                cmd="${'$'}1"
+                shift
+                exec "${'$'}cmd" "$@"
+            else
+                /system/bin/printenv
+            fi
+        """.trimIndent() + "\n"
+
+        File(usrBin, "env").apply {
+            writeText(envScriptContent, Charsets.UTF_8)
+            setExecutable(true, false)
+            setReadable(true, false)
         }
     }
 
@@ -176,7 +230,7 @@ object NodeNativeBootstrap {
                 ];
               };
 
-              const NODE_EXEC = process.execPath;
+              const NODE_EXEC = process.env.MOBILE_CODE_NODE_LAUNCHER || process.execPath;
               const USR_DIR = process.env.MOBILE_CODE_USR_DIR || path.resolve(process.env.HOME || '/', '../usr');
               const NPM_CLI_JS = process.env.MOBILE_CODE_NPM_CLI || path.join(USR_DIR, 'lib/node_modules/npm/bin/npm-cli.js');
               const NPX_CLI_JS = process.env.MOBILE_CODE_NPX_CLI || path.join(USR_DIR, 'lib/node_modules/npm/bin/npx-cli.js');

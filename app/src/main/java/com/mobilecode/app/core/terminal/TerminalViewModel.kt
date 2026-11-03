@@ -560,6 +560,7 @@ class TerminalViewModel(
             env["MOBILE_CODE_USR_DIR"] = usrDir.absolutePath
             env["MOBILE_CODE_NPM_CLI"] = npmCliJs.absolutePath
             env["MOBILE_CODE_NPX_CLI"] = npxCliJs.absolutePath
+            env["MOBILE_CODE_NODE_LAUNCHER"] = NodeNativeBootstrap.getNativeNodeLauncher(context).absolutePath
 
             val homeDir = File(context.filesDir.canonicalFile, "home").apply { if (!exists()) mkdirs() }
             env["HOME"] = homeDir.absolutePath
