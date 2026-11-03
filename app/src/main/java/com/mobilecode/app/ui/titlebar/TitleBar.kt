@@ -12,10 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.ViewSidebar
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.ViewSidebar
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -107,7 +107,7 @@ fun TitleBar(
                     modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.OpenInNew,
+                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                         contentDescription = "New Window (Ctrl+N)",
                         tint = VsCodeTheme.Foreground,
                         modifier = Modifier.size(15.dp)
@@ -119,7 +119,7 @@ fun TitleBar(
                 modifier = Modifier.size(28.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.ViewSidebar,
+                    imageVector = Icons.AutoMirrored.Filled.ViewSidebar,
                     contentDescription = "Toggle Sidebar",
                     tint = VsCodeTheme.Foreground,
                     modifier = Modifier.size(16.dp)

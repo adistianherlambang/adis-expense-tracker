@@ -26,7 +26,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.NoteAdd
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -176,7 +176,7 @@ fun EditorArea(
                             modifier = Modifier.height(34.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.NoteAdd,
+                                imageVector = Icons.AutoMirrored.Filled.NoteAdd,
                                 contentDescription = null,
                                 tint = Color.White,
                                 modifier = Modifier.size(15.dp)

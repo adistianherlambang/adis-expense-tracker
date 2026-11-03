@@ -26,7 +26,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.NoteAdd
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -107,7 +107,7 @@ fun ExplorerView(
                         modifier = Modifier.size(24.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.NoteAdd,
+                            imageVector = Icons.AutoMirrored.Filled.NoteAdd,
                             contentDescription = "New File",
                             tint = VsCodeTheme.Foreground,
                             modifier = Modifier.size(16.dp)
