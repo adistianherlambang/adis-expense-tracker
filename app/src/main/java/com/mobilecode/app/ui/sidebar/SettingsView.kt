@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -49,7 +48,7 @@ fun SettingsView(
             .padding(12.dp)
     ) {
         Text(
-            text = "SETTINGS",
+            text = "SETTINGS & ENVIRONMENT",
             color = VsCodeTheme.Foreground,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
@@ -58,11 +57,70 @@ fun SettingsView(
 
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             item {
-                SettingsSectionHeader("EDITOR CONFIGURATION")
+                SettingsSectionHeader("WORKSPACE & SANDBOX")
+                SettingSwitchRow(
+                    label = "Restore Last Workspace",
+                    checked = settings.workspace.restoreLastWorkspaceOnStartup,
+                    onCheckedChange = { checked ->
+                        scope.launch {
+                            settingsRepository.updateSettings(
+                                settings.copy(workspace = settings.workspace.copy(restoreLastWorkspaceOnStartup = checked))
+                            )
+                        }
+                    }
+                )
+                SettingSwitchRow(
+                    label = "Isolated Sandbox Environment",
+                    checked = settings.workspace.sandboxEnforced,
+                    onCheckedChange = { checked ->
+                        scope.launch {
+                            settingsRepository.updateSettings(
+                                settings.copy(workspace = settings.workspace.copy(sandboxEnforced = checked))
+                            )
+                        }
+                    }
+                )
+                SettingItemRow(label = "New Window Shortcut", value = settings.workspace.newWindowKeybinding)
+
+                HorizontalDivider(color = VsCodeTheme.BorderColor, modifier = Modifier.padding(vertical = 8.dp))
+            }
+
+            item {
+                SettingsSectionHeader("EDITOR FORMATTING & AUTO-CLOSING")
                 SettingItemRow(label = "Font Family", value = settings.editor.fontFamily)
                 SettingItemRow(label = "Font Size", value = "${settings.editor.fontSize}px")
-                SettingItemRow(label = "Line Height", value = "${settings.editor.lineHeight}px")
                 SettingItemRow(label = "Tab Size", value = "${settings.editor.tabSize} spaces")
+                SettingItemRow(label = "Auto-Close Pairs", value = "() {} [] \"\" '' ``")
+
+                SettingSwitchRow(
+                    label = "Auto-Indentation",
+                    checked = settings.editor.autoIndent,
+                    onCheckedChange = { checked ->
+                        scope.launch {
+                            settingsRepository.updateSettings(
+                                settings.copy(editor = settings.editor.copy(autoIndent = checked))
+                            )
+                        }
+                    }
+                )
+
+                SettingSwitchRow(
+                    label = "Auto-Closing Brackets & Quotes",
+                    checked = settings.editor.autoClosingBrackets == "always",
+                    onCheckedChange = { checked ->
+                        val mode = if (checked) "always" else "never"
+                        scope.launch {
+                            settingsRepository.updateSettings(
+                                settings.copy(
+                                    editor = settings.editor.copy(
+                                        autoClosingBrackets = mode,
+                                        autoClosingQuotes = mode
+                                    )
+                                )
+                            )
+                        }
+                    }
+                )
 
                 SettingSwitchRow(
                     label = "Minimap Enabled",
@@ -80,10 +138,11 @@ fun SettingsView(
             }
 
             item {
-                SettingsSectionHeader("TERMINAL CONFIGURATION")
+                SettingsSectionHeader("INTEGRATED TERMINAL")
                 SettingItemRow(label = "Font Family", value = settings.terminal.fontFamily)
                 SettingItemRow(label = "Font Size", value = "${settings.terminal.fontSize}px")
-                SettingItemRow(label = "Cursor Style", value = settings.terminal.cursorStyle)
+                SettingItemRow(label = "Clipboard Copy/Paste", value = "Enabled (Ctrl+C / Ctrl+V)")
+                SettingItemRow(label = "Sandbox Confinement", value = "Active")
 
                 HorizontalDivider(color = VsCodeTheme.BorderColor, modifier = Modifier.padding(vertical = 8.dp))
             }
@@ -191,4 +250,3 @@ private fun SettingSwitchRow(
         )
     }
 }
-
