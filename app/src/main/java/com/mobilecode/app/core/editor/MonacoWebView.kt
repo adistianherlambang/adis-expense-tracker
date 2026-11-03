@@ -23,12 +23,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.FormatAlignLeft
-import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -301,7 +301,7 @@ fun MonacoWebView(
                     modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.FormatAlignLeft,
+                        imageVector = Icons.AutoMirrored.Filled.FormatAlignLeft,
                         contentDescription = "Format Document Indentation",
                         tint = VsCodeTheme.Foreground,
                         modifier = Modifier.size(14.dp)
@@ -321,7 +321,7 @@ fun MonacoWebView(
                     modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Undo,
+                        imageVector = Icons.AutoMirrored.Filled.Undo,
                         contentDescription = "Undo",
                         tint = if (undoStack.isNotEmpty()) VsCodeTheme.Foreground else VsCodeTheme.SecondaryForeground,
                         modifier = Modifier.size(14.dp)
@@ -341,7 +341,7 @@ fun MonacoWebView(
                     modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Redo,
+                        imageVector = Icons.AutoMirrored.Filled.Redo,
                         contentDescription = "Redo",
                         tint = if (redoStack.isNotEmpty()) VsCodeTheme.Foreground else VsCodeTheme.SecondaryForeground,
                         modifier = Modifier.size(14.dp)

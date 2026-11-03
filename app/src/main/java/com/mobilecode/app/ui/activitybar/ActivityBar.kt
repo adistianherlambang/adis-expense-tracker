@@ -12,12 +12,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.AltRoute
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -68,7 +68,7 @@ fun ActivityBar(
                 onClick = { onViewSelected(ActivityView.SEARCH) }
             )
             ActivityBarItem(
-                icon = Icons.Outlined.AltRoute,
+                icon = Icons.AutoMirrored.Outlined.AltRoute,
                 contentDescription = "Source Control",
                 isSelected = isSidebarVisible && currentView == ActivityView.SOURCE_CONTROL,
                 onClick = { onViewSelected(ActivityView.SOURCE_CONTROL) }

@@ -9,10 +9,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.AltRoute
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -55,7 +55,7 @@ fun StatusBar(
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.AltRoute,
+                    imageVector = Icons.AutoMirrored.Outlined.AltRoute,
                     contentDescription = "Git Branch",
                     tint = Color.White,
                     modifier = Modifier.size(12.dp)
