@@ -709,14 +709,13 @@ class TerminalViewModel(
             }
             "list", "list-installed" -> {
                 session.append(
-                    "Listing... Done\n" +
-                    "curl/stable,now 8.7.1 aarch64 [installed]\n" +
-                    "git/stable,now 2.44.0 aarch64 [installed]\n" +
-                    "nodejs/stable,now 20.11.0 aarch64 [installed]\n" +
-                    "npm/stable,now 10.5.0 all [installed]\n" +
-                    "openssh/stable,now 9.7p1 aarch64 [installed]\n" +
-                    "pip/stable,now 24.0 all [installed]\n" +
-                    "python/stable,now 3.11.8 aarch64 [installed]\n"
+                    "Listing installed packages... Done\n" +
+                    "nodejs/embedded [installed, native ARM64 V8 ELF engine 18.20.4]\n" +
+                    "npm/official [installed, Node Package Manager]\n" +
+                    "python/embedded [installed, Python 3.11 Runtime Engine]\n" +
+                    "pip/official [installed, Python Package Installer]\n" +
+                    "git/embedded [installed, Native Git Engine]\n" +
+                    "sh/system [installed, Android Shell /system/bin/sh]\n"
                 )
             }
             "install", "add" -> {
@@ -727,7 +726,20 @@ class TerminalViewModel(
                     session.append(
                         "Reading package lists... Done\n" +
                         "Building dependency tree... Done\n" +
-                        "Setting up ${pkgs.joinToString(", ")}... Done\n"
+                        "Package ${pkgs.joinToString(", ")} is available. Use 'npm install <pkg>' or 'pip install <pkg>' to add libraries.\n"
+                    )
+                }
+            }
+            "uninstall", "remove", "purge" -> {
+                val pkgs = args.drop(1).filter { !it.startsWith("-") }
+                if (pkgs.isEmpty()) {
+                    session.append("pkg: specify at least one package name to remove\n")
+                } else {
+                    session.append(
+                        "Reading package lists... Done\n" +
+                        "Note: Core runtime packages (${pkgs.joinToString(", ")}) are integrated into Mobile Code's native ELF engine\n" +
+                        "for Android SELinux W^X compliance. They remain permanently available so your editor never breaks.\n" +
+                        "To remove project libraries, run 'npm uninstall <pkg>' or 'rm -rf node_modules'.\n"
                     )
                 }
             }
