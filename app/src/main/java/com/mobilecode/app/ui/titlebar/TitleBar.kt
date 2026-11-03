@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ViewSidebar
 import androidx.compose.material.icons.outlined.Terminal
@@ -34,6 +35,7 @@ fun TitleBar(
     onOpenCommandPalette: () -> Unit,
     onToggleSidebar: () -> Unit,
     onToggleTerminal: () -> Unit,
+    onOpenNewWindow: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -99,6 +101,19 @@ fun TitleBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
+            if (onOpenNewWindow != null) {
+                IconButton(
+                    onClick = onOpenNewWindow,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.OpenInNew,
+                        contentDescription = "New Window (Ctrl+N)",
+                        tint = VsCodeTheme.Foreground,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+            }
             IconButton(
                 onClick = onToggleSidebar,
                 modifier = Modifier.size(28.dp)

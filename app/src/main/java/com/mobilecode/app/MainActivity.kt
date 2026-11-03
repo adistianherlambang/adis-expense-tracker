@@ -1,7 +1,9 @@
 package com.mobilecode.app
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -18,6 +20,7 @@ import com.mobilecode.app.core.git.GitViewModel
 import com.mobilecode.app.core.runtime.PackageManager
 import com.mobilecode.app.core.search.SearchViewModel
 import com.mobilecode.app.core.settings.SettingsRepository
+import com.mobilecode.app.core.terminal.OutputLogger
 import com.mobilecode.app.core.terminal.TerminalForegroundService
 import com.mobilecode.app.core.terminal.TerminalViewModel
 import com.mobilecode.app.ui.MainScreen
@@ -75,7 +78,11 @@ class MainActivity : ComponentActivity() {
         settingsRepository = SettingsRepository(this)
         packageManager = PackageManager(this)
 
-        // App starts with empty workspace until user opens or creates a project folder
+        // Automatically restore last opened workspace upon startup if persisted
+        val restored = workspaceManager.restoreLastWorkspaceSync()
+        if (restored != null) {
+            OutputLogger.logSystem("Restored last workspace on startup: ${restored.absolutePath}")
+        }
 
         // Start background foreground service for terminal persistence
         TerminalForegroundService.startService(this)
@@ -92,31 +99,51 @@ class MainActivity : ComponentActivity() {
                     packageManager = packageManager,
                     isCommandPaletteOpen = isCommandPaletteOpen,
                     onOpenCommandPalette = { isCommandPaletteOpen = true },
-                    onDismissCommandPalette = { isCommandPaletteOpen = false }
+                    onDismissCommandPalette = { isCommandPaletteOpen = false },
+                    onOpenNewWindow = { openNewWindow() }
                 )
             }
         }
     }
 
     /**
-     * Intercept Physical Hardware Keyboard Shortcuts
+     * Opens a new independent IDE window (multi-window / multi-document task)
+     * while keeping the existing window open. Triggered via Ctrl+N or Cmd+N.
+     */
+    fun openNewWindow() {
+        OutputLogger.logSystem("Opening new IDE window (Ctrl+N / Cmd+N) while keeping current window active")
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+            putExtra("WINDOW_ID", System.currentTimeMillis())
+        }
+        startActivity(intent)
+        Toast.makeText(this, "Opened New Window (Ctrl+N / Cmd+N)", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Intercept Physical Hardware Keyboard Shortcuts (Ctrl+* or Cmd+* on Mac)
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (event != null && event.isCtrlPressed) {
+        if (event != null && (event.isCtrlPressed || event.isMetaPressed)) {
             when (keyCode) {
-                // Ctrl + S: Save file
+                // Ctrl + N or Cmd + N: Open a new window while keeping existing window open
+                KeyEvent.KEYCODE_N -> {
+                    openNewWindow()
+                    return true
+                }
+                // Ctrl + S or Cmd + S: Save file
                 KeyEvent.KEYCODE_S -> {
                     editorViewModel.saveActiveFile()
                     return true
                 }
-                // Ctrl + Shift + P: Command Palette
+                // Ctrl + Shift + P or Cmd + Shift + P: Command Palette
                 KeyEvent.KEYCODE_P -> {
                     if (event.isShiftPressed) {
                         isCommandPaletteOpen = !isCommandPaletteOpen
                         return true
                     }
                 }
-                // Ctrl + W: Close active tab
+                // Ctrl + W or Cmd + W: Close active tab
                 KeyEvent.KEYCODE_W -> {
                     val activeIndex = editorViewModel.activeTabIndex.value
                     if (activeIndex != -1) {

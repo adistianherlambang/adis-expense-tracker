@@ -51,7 +51,8 @@ fun MainScreen(
     packageManager: PackageManager,
     isCommandPaletteOpen: Boolean,
     onOpenCommandPalette: () -> Unit,
-    onDismissCommandPalette: () -> Unit
+    onDismissCommandPalette: () -> Unit,
+    onOpenNewWindow: () -> Unit = {}
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -73,6 +74,7 @@ fun MainScreen(
 
     val commandList = remember {
         listOf(
+            PaletteCommand("new_window", "New Window", "Window", "Ctrl+N / Cmd+N") { onOpenNewWindow() },
             PaletteCommand("save", "Save", "File", "Ctrl+S") { editorViewModel.saveActiveFile() },
             PaletteCommand("save_all", "Save All", "File") { editorViewModel.saveAll() },
             PaletteCommand("toggle_term", "Toggle Terminal", "View", "Ctrl+`") { isBottomPanelVisible = !isBottomPanelVisible },
@@ -101,7 +103,8 @@ fun MainScreen(
                 projectName = currentWorkspaceDir?.name,
                 onOpenCommandPalette = onOpenCommandPalette,
                 onToggleSidebar = { isSidebarVisible = !isSidebarVisible },
-                onToggleTerminal = { isBottomPanelVisible = !isBottomPanelVisible }
+                onToggleTerminal = { isBottomPanelVisible = !isBottomPanelVisible },
+                onOpenNewWindow = onOpenNewWindow
             )
 
             // Middle Work Area
