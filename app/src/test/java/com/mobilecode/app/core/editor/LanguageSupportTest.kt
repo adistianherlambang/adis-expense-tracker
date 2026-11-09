@@ -3,7 +3,6 @@ package com.mobilecode.app.core.editor
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -200,5 +199,103 @@ class LanguageSupportTest {
         val result = applyEditorSmartEdits(initial, typed, "html")
         assertEquals("<div></div>", result.text)
         assertEquals(5, result.selection.start)
+    }
+
+    @Test
+    fun `test DiagnosticsEngine correctly ignores apostrophes and brackets in comments`() {
+        val ktFile = File("sample.kt")
+        val code = """
+            // This is an apostrophe's test and { unmatched bracket in comment
+            /*
+             * Block comment with 'quotes' and { [ ( unmatched braces
+             */
+            fun sample() {
+                val x = 10
+            }
+        """.trimIndent()
+        val items = DiagnosticsEngine.analyze(ktFile, code)
+        assertTrue("Expected 0 diagnostic errors for comments with quotes and brackets, but got: $items", items.isEmpty())
+    }
+
+    @Test
+    fun `test DiagnosticsEngine correctly handles character literals and escape sequences`() {
+        val ktFile = File("sample.kt")
+        val code = """
+            fun sample() {
+                val singleQuote = '\''
+                val backslash = '\\'
+                val openParen = '('
+                val closeBrace = '}'
+                val strWithEscapedBackslash = "hello\\"
+                val normalStr = "world"
+            }
+        """.trimIndent()
+        val items = DiagnosticsEngine.analyze(ktFile, code)
+        assertTrue("Expected 0 diagnostic errors for char literals, but got: $items", items.isEmpty())
+    }
+
+    @Test
+    fun `test DiagnosticsEngine correctly handles multiline and template strings`() {
+        val ktFile = File("sample.kt")
+        val ktCode = """
+            val multiline = ""${'"'}
+                {
+                    "json": "value's with apostrophe"
+                }
+            ""${'"'}
+        """.trimIndent()
+        val ktItems = DiagnosticsEngine.analyze(ktFile, ktCode)
+        assertTrue("Expected 0 diagnostic errors for multiline string, but got: $ktItems", ktItems.isEmpty())
+
+        val jsFile = File("sample.js")
+        val jsCode = """
+            const name = "World";
+            const greeting = `Hello ${'$'}{name}, it's wonderful! { unmatched`;
+        """.trimIndent()
+        val jsItems = DiagnosticsEngine.analyze(jsFile, jsCode)
+        assertTrue("Expected 0 diagnostic errors for template literal, but got: $jsItems", jsItems.isEmpty())
+    }
+
+    @Test
+    fun `test DiagnosticsEngine catches real syntax errors`() {
+        val ktFile = File("error.kt")
+
+        // Unclosed brace
+        val unclosedBrace = "fun test() { val a = 1;"
+        val errors1 = DiagnosticsEngine.analyze(ktFile, unclosedBrace)
+        assertTrue("Should detect unclosed brace", errors1.any { it.message.contains("Unclosed bracket '{'") })
+
+        // Unexpected closing brace
+        val unexpectedBrace = "fun test() {} }"
+        val errors2 = DiagnosticsEngine.analyze(ktFile, unexpectedBrace)
+        assertTrue("Should detect unexpected closing brace", errors2.any { it.message.contains("Unexpected closing bracket '}'") })
+
+        // Unclosed string literal
+        val unclosedString = "val text = \"unterminated string;"
+        val errors3 = DiagnosticsEngine.analyze(ktFile, unclosedString)
+        assertTrue("Should detect unclosed string literal", errors3.any { it.message.contains("Unclosed string literal") })
+    }
+
+    @Test
+    fun `test DiagnosticsEngine reports 0 errors on target codebase files`() {
+        val candidatePaths = listOf(
+            "app/src/main/java/com/mobilecode/app/core/editor/DiagnosticsEngine.kt",
+            "app/src/main/java/com/mobilecode/app/core/editor/MonacoWebView.kt",
+            "app/src/main/java/com/mobilecode/app/core/editor/EditorViewModel.kt",
+            "app/src/main/java/com/mobilecode/app/core/terminal/TerminalViewModel.kt",
+            "app/src/test/java/com/mobilecode/app/core/editor/LanguageSupportTest.kt"
+        )
+
+        for (path in candidatePaths) {
+            val file = File(path).let { if (it.exists()) it else File("../$path") }
+            if (file.exists()) {
+                val content = file.readText()
+                val diagnostics = DiagnosticsEngine.analyze(file, content)
+                assertTrue(
+                    "Target file '${file.name}' should produce 0 diagnostic errors, but found: ${diagnostics.map { "${it.line}:${it.column} - ${it.message}" }}",
+                    diagnostics.isEmpty()
+                )
+            }
+        }
     }
 }

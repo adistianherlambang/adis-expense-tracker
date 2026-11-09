@@ -35,71 +35,219 @@ object DiagnosticsEngine {
     private fun analyzeBraceLanguage(file: File, content: String): List<DiagnosticItem> {
         val items = mutableListOf<DiagnosticItem>()
         val lines = content.lines()
-        val source = "${file.extension.lowercase()}-linter"
+        val extension = file.extension.lowercase()
+        val source = "$extension-linter"
 
-        val openBraces = mutableListOf<Pair<Int, Int>>() // line, col
-        val openParens = mutableListOf<Pair<Int, Int>>()
-        val openBrackets = mutableListOf<Pair<Int, Int>>()
+        val bracketStack = mutableListOf<OpenBracket>()
+        var inBlockComment = false
+        var blockCommentStartLine = 1
+        var blockCommentStartCol = 1
 
-        lines.forEachIndexed { lineIdx, line ->
+        var inTripleDouble = false
+        var tripleDoubleStartLine = 1
+        var tripleDoubleStartCol = 1
+
+        var inTemplateString = false
+        var templateStringStartLine = 1
+        var templateStringStartCol = 1
+
+        for (lineIdx in lines.indices) {
             val lineNum = lineIdx + 1
-            var inString: Char? = null
+            val line = lines[lineIdx]
+            var i = 0
 
-            for (colIdx in line.indices) {
-                val c = line[colIdx]
-                val colNum = colIdx + 1
-
-                if (inString != null) {
-                    if (c == inString && (colIdx == 0 || line[colIdx - 1] != '\\')) {
-                        inString = null
+            while (i < line.length) {
+                if (inBlockComment) {
+                    if (line.startsWith("*/", i)) {
+                        inBlockComment = false
+                        i += 2
+                    } else {
+                        i++
                     }
-                } else {
-                    when (c) {
-                        '"', '\'', '`' -> inString = c
-                        '{' -> openBraces.add(Pair(lineNum, colNum))
-                        '}' -> {
-                            if (openBraces.isEmpty()) {
-                                items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing brace '}'", DiagnosticSeverity.ERROR, source))
-                            } else {
-                                openBraces.removeAt(openBraces.size - 1)
-                            }
-                        }
-                        '(' -> openParens.add(Pair(lineNum, colNum))
-                        ')' -> {
-                            if (openParens.isEmpty()) {
-                                items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing parenthesis ')'", DiagnosticSeverity.ERROR, source))
-                            } else {
-                                openParens.removeAt(openParens.size - 1)
-                            }
-                        }
-                        '[' -> openBrackets.add(Pair(lineNum, colNum))
-                        ']' -> {
-                            if (openBrackets.isEmpty()) {
-                                items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing bracket ']'", DiagnosticSeverity.ERROR, source))
-                            } else {
-                                openBrackets.removeAt(openBrackets.size - 1)
-                            }
-                        }
-                    }
+                    continue
                 }
-            }
 
-            if (inString != null && inString != '`') {
-                items.add(DiagnosticItem(file, lineNum, line.length, "Unclosed string literal", DiagnosticSeverity.ERROR, source))
+                if (inTripleDouble) {
+                    if (line.startsWith("\"\"\"", i)) {
+                        inTripleDouble = false
+                        i += 3
+                    } else {
+                        i++
+                    }
+                    continue
+                }
+
+                if (inTemplateString) {
+                    if (line[i] == '\\') {
+                        i = (i + 2).coerceAtMost(line.length)
+                    } else if (line[i] == '`') {
+                        inTemplateString = false
+                        i++
+                    } else {
+                        i++
+                    }
+                    continue
+                }
+
+                val c = line[i]
+                val colNum = i + 1
+
+                // Block comment start: /*
+                if (line.startsWith("/*", i)) {
+                    inBlockComment = true
+                    blockCommentStartLine = lineNum
+                    blockCommentStartCol = colNum
+                    i += 2
+                    continue
+                }
+
+                // Line comment start: //
+                if (line.startsWith("//", i)) {
+                    break
+                }
+
+                // PHP script comment: #
+                if (extension == "php" && c == '#') {
+                    break
+                }
+
+                // Multiline raw string start: """
+                if (line.startsWith("\"\"\"", i)) {
+                    inTripleDouble = true
+                    tripleDoubleStartLine = lineNum
+                    tripleDoubleStartCol = colNum
+                    i += 3
+                    continue
+                }
+
+                // Template literal start: `
+                if (c == '`') {
+                    inTemplateString = true
+                    templateStringStartLine = lineNum
+                    templateStringStartCol = colNum
+                    i++
+                    continue
+                }
+
+                // Double quoted string: "
+                if (c == '"') {
+                    val startCol = colNum
+                    i++
+                    var closed = false
+                    while (i < line.length) {
+                        if (line[i] == '\\') {
+                            i = (i + 2).coerceAtMost(line.length)
+                        } else if (line[i] == '"') {
+                            closed = true
+                            i++
+                            break
+                        } else {
+                            i++
+                        }
+                    }
+                    if (!closed) {
+                        items.add(DiagnosticItem(file, lineNum, startCol, "Unclosed string literal", DiagnosticSeverity.ERROR, source))
+                    }
+                    continue
+                }
+
+                // Single quoted char or string: '
+                if (c == '\'') {
+                    val startCol = colNum
+
+                    // Special case for Rust lifetimes (e.g. &'a str, <'a>)
+                    if (extension == "rs" && i + 1 < line.length && (line[i + 1].isLetter() || line[i + 1] == '_')) {
+                        val isCharLit = (i + 2 < line.length && line[i + 2] == '\'') ||
+                                (line[i + 1] == '\\' && i + 3 < line.length && line[i + 3] == '\'')
+                        if (!isCharLit) {
+                            i++
+                            while (i < line.length && (line[i].isLetterOrDigit() || line[i] == '_')) {
+                                i++
+                            }
+                            continue
+                        }
+                    }
+
+                    i++
+                    var closed = false
+                    while (i < line.length) {
+                        if (line[i] == '\\') {
+                            i = (i + 2).coerceAtMost(line.length)
+                        } else if (line[i] == '\'') {
+                            closed = true
+                            i++
+                            break
+                        } else {
+                            i++
+                        }
+                    }
+                    if (!closed) {
+                        items.add(DiagnosticItem(file, lineNum, startCol, "Unclosed string literal", DiagnosticSeverity.ERROR, source))
+                    }
+                    continue
+                }
+
+                // Open brackets: {, (, [
+                if (c == '{' || c == '(' || c == '[') {
+                    bracketStack.add(OpenBracket(c, lineNum, colNum))
+                    i++
+                    continue
+                }
+
+                // Closing brackets: }, ), ]
+                if (c == '}' || c == ')' || c == ']') {
+                    if (bracketStack.isEmpty()) {
+                        items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing bracket '$c'", DiagnosticSeverity.ERROR, source))
+                    } else {
+                        val top = bracketStack.last()
+                        if (isMatching(top.char, c)) {
+                            bracketStack.removeAt(bracketStack.size - 1)
+                        } else {
+                            val matchIdx = bracketStack.indexOfLast { isMatching(it.char, c) }
+                            if (matchIdx != -1) {
+                                for (k in bracketStack.size - 1 downTo matchIdx + 1) {
+                                    val unclosed = bracketStack[k]
+                                    items.add(DiagnosticItem(file, unclosed.line, unclosed.col, "Unclosed bracket '${unclosed.char}'", DiagnosticSeverity.ERROR, source))
+                                }
+                                while (bracketStack.size > matchIdx) {
+                                    bracketStack.removeAt(bracketStack.size - 1)
+                                }
+                            } else {
+                                items.add(DiagnosticItem(file, lineNum, colNum, "Unexpected closing bracket '$c'", DiagnosticSeverity.ERROR, source))
+                            }
+                        }
+                    }
+                    i++
+                    continue
+                }
+
+                i++
             }
         }
 
-        openBraces.forEach { (l, c) ->
-            items.add(DiagnosticItem(file, l, c, "Unclosed brace '{'", DiagnosticSeverity.ERROR, source))
+        if (inBlockComment) {
+            items.add(DiagnosticItem(file, blockCommentStartLine, blockCommentStartCol, "Unclosed block comment '/*'", DiagnosticSeverity.ERROR, source))
         }
-        openParens.forEach { (l, c) ->
-            items.add(DiagnosticItem(file, l, c, "Unclosed parenthesis '('", DiagnosticSeverity.ERROR, source))
+        if (inTripleDouble) {
+            items.add(DiagnosticItem(file, tripleDoubleStartLine, tripleDoubleStartCol, "Unclosed multiline string literal", DiagnosticSeverity.ERROR, source))
         }
-        openBrackets.forEach { (l, c) ->
-            items.add(DiagnosticItem(file, l, c, "Unclosed bracket '['", DiagnosticSeverity.ERROR, source))
+        if (inTemplateString) {
+            items.add(DiagnosticItem(file, templateStringStartLine, templateStringStartCol, "Unclosed template string literal", DiagnosticSeverity.ERROR, source))
+        }
+
+        bracketStack.forEach { b ->
+            items.add(DiagnosticItem(file, b.line, b.col, "Unclosed bracket '${b.char}'", DiagnosticSeverity.ERROR, source))
         }
 
         return items
+    }
+
+    private data class OpenBracket(val char: Char, val line: Int, val col: Int)
+
+    private fun isMatching(open: Char, close: Char): Boolean {
+        return (open == '{' && close == '}') ||
+                (open == '(' && close == ')') ||
+                (open == '[' && close == ']')
     }
 
     private fun analyzeJson(file: File, content: String): List<DiagnosticItem> {
