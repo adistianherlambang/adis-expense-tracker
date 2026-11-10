@@ -20,17 +20,8 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION_CODE = 13
+    private const val BOOTSTRAP_VERSION_CODE = 14
     private val initMutex = Mutex()
-
-    @Volatile
-    private var activeNodeVersion: String = "v20.18.0"
-
-    fun setActiveNodeVersion(version: String) {
-        activeNodeVersion = if (version.startsWith("v")) version else "v$version"
-    }
-
-    fun getActiveNodeVersion(): String = activeNodeVersion
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
         initMutex.withLock {
@@ -44,6 +35,17 @@ object NodeNativeBootstrap {
 
             usrBin.mkdirs()
             usrLib.mkdirs()
+
+            // Synchronize active node version from persisted environment preferences into .active_node_version
+            val prefs = context.getSharedPreferences("mobile_code_environments", Context.MODE_PRIVATE)
+            val activeEnvId = prefs.getString("active_env_id", "node-20") ?: "node-20"
+            val persistedNodeVer = prefs.getString("active_node_version", null)
+                ?: when (activeEnvId) {
+                    "node-22" -> "v22.14.0"
+                    "node-18" -> "v18.20.4"
+                    else -> "v20.18.0"
+                }
+            File(usrDir, ".active_node_version").writeText(persistedNodeVer, Charsets.UTF_8)
 
             // 1. Locate native executable compiled into APK native library directory
             val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
@@ -115,10 +117,14 @@ object NodeNativeBootstrap {
             fi
             LIB_DIR="${'$'}(dirname "${'$'}LAUNCHER")"
             export LD_LIBRARY_PATH="${'$'}LIB_DIR:${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
+            export MOBILE_CODE_USR_DIR="${'$'}DIR"
             if [ -z "${'$'}NODE_PATH" ]; then
                 export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
             fi
-            exec "${'$'}LAUNCHER" "$@"
+            if [ "${'$'}1" = "-v" ] || [ "${'$'}1" = "--version" ]; then
+                exec "${'$'}LAUNCHER" --require "${'$'}DIR/lib/android-shim.js" -p "process.version"
+            fi
+            exec "${'$'}LAUNCHER" --require "${'$'}DIR/lib/android-shim.js" "$@"
         """.trimIndent() + "\n"
 
         File(usrBin, "node").apply {
@@ -146,10 +152,11 @@ object NodeNativeBootstrap {
             LIB_DIR="${'$'}(dirname "${'$'}LAUNCHER")"
             export PATH="${'$'}DIR/bin:${'$'}PATH"
             export LD_LIBRARY_PATH="${'$'}LIB_DIR:${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
+            export MOBILE_CODE_USR_DIR="${'$'}DIR"
             export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
             export npm_config_scripts_prepend_node_path=true
             export npm_config_update_notifier=false
-            exec "${'$'}LAUNCHER" "${npmCliJs.absolutePath}" "$@"
+            exec "${'$'}LAUNCHER" --require "${'$'}DIR/lib/android-shim.js" "${npmCliJs.absolutePath}" "$@"
         """.trimIndent() + "\n"
 
         File(usrBin, "npm").apply {
@@ -172,10 +179,11 @@ object NodeNativeBootstrap {
             LIB_DIR="${'$'}(dirname "${'$'}LAUNCHER")"
             export PATH="${'$'}DIR/bin:${'$'}PATH"
             export LD_LIBRARY_PATH="${'$'}LIB_DIR:${nativeLibDir.absolutePath}:${'$'}LD_LIBRARY_PATH"
+            export MOBILE_CODE_USR_DIR="${'$'}DIR"
             export NODE_PATH="${File(usrLib, "node_modules").absolutePath}"
             export npm_config_scripts_prepend_node_path=true
             export npm_config_update_notifier=false
-            exec "${'$'}LAUNCHER" "${npxCliJs.absolutePath}" "$@"
+            exec "${'$'}LAUNCHER" --require "${'$'}DIR/lib/android-shim.js" "${npxCliJs.absolutePath}" "$@"
         """.trimIndent() + "\n"
 
         File(usrBin, "npx").apply {
@@ -195,9 +203,13 @@ object NodeNativeBootstrap {
             if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
                 LAUNCHER="${nativeNodeLauncher.absolutePath}"
             fi
-            if [ "${'$'}1" = "node" ]; then
+            export MOBILE_CODE_USR_DIR="${'$'}DIR"
+            if [ "${'$'}1" = "node" ] || [ "${'$'}1" = "nodejs" ]; then
                 shift
-                exec "${'$'}LAUNCHER" "$@"
+                if [ "${'$'}1" = "-v" ] || [ "${'$'}1" = "--version" ]; then
+                    exec "${'$'}LAUNCHER" --require "${'$'}DIR/lib/android-shim.js" -p "process.version"
+                fi
+                exec "${'$'}LAUNCHER" --require "${'$'}DIR/lib/android-shim.js" "$@"
             elif [ -n "${'$'}1" ]; then
                 cmd="${'$'}1"
                 shift
@@ -340,7 +352,17 @@ object NodeNativeBootstrap {
               } catch (_) {}
 
               // Report process.version as dynamic active environment version (e.g. Node 20 / 22)
-              const targetNodeVer = process.env.MOBILE_CODE_NODE_VERSION || 'v20.18.0';
+              const USR_DIR = process.env.MOBILE_CODE_USR_DIR || path.resolve(__dirname, '..');
+              let targetNodeVer = process.env.MOBILE_CODE_NODE_VERSION || '';
+              try {
+                const verFile = path.join(USR_DIR, '.active_node_version');
+                if (fs.existsSync(verFile)) {
+                  const fileVer = fs.readFileSync(verFile, 'utf8').trim();
+                  if (fileVer) targetNodeVer = fileVer;
+                }
+              } catch (_) {}
+              if (!targetNodeVer) targetNodeVer = 'v20.18.0';
+              if (!targetNodeVer.startsWith('v')) targetNodeVer = 'v' + targetNodeVer;
               const cleanVerNumber = targetNodeVer.replace(/^v/, '');
               try {
                 Object.defineProperty(process, 'version', {
@@ -349,11 +371,13 @@ object NodeNativeBootstrap {
                   configurable: true,
                   enumerable: true
                 });
-                if (process.versions) {
-                  try {
-                    process.versions.node = cleanVerNumber;
-                  } catch (_) {}
-                }
+                const updatedVersions = Object.assign({}, process.versions || {}, { node: cleanVerNumber });
+                Object.defineProperty(process, 'versions', {
+                  value: updatedVersions,
+                  writable: true,
+                  configurable: true,
+                  enumerable: true
+                });
               } catch (_) {}
 
               // 2. Prevent stdin EOF from terminating dev servers (e.g. react-scripts start.js line 149)
@@ -663,6 +687,10 @@ object NodeNativeBootstrap {
 
                 const base = path.basename(rawCmd);
                 if (base === 'node' || base === 'nodejs') {
+                  const trimmedTail = tail.trim();
+                  if (trimmedTail === '-v' || trimmedTail === '--version') {
+                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" --require "${'$'}{SHIM_FILE}" -p "process.version"`;
+                  }
                   return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" --require "${'$'}{SHIM_FILE}"${'$'}{tail}`;
                 }
                 if (base === 'npm') {
@@ -715,7 +743,7 @@ object NodeNativeBootstrap {
                 if (resolved) {
                   const info = inspectExecutable(resolved);
                   if (info && info.type === 'node') {
-                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" "${'$'}{resolved}"${'$'}{tail}`;
+                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" --require "${'$'}{SHIM_FILE}" "${'$'}{resolved}"${'$'}{tail}`;
                   }
                   if (info && info.type === 'sh') {
                     return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{ANDROID_SH}" "${'$'}{resolved}"${'$'}{tail}`;
@@ -756,21 +784,21 @@ object NodeNativeBootstrap {
                   rawFile.endsWith('/app_process32') ||
                   rawFile.endsWith('/app_process') ||
                   rawFile.endsWith('libnode_launcher.so') ||
-                  rawFile === 'libnode_launcher.so'
+                  rawFile === 'libnode_launcher.so' ||
+                  base === 'node' ||
+                  base === 'nodejs'
                 ) {
                   options.file = NODE_EXEC;
-                  origArgs[0] = NODE_EXEC;
-                  options.args = origArgs;
-                  return options;
-                }
-
-                if (base === 'node' || base === 'nodejs') {
-                  options.file = NODE_EXEC;
                   const newArgs = [NODE_EXEC];
-                  if (!origArgs.includes('--require')) {
-                    newArgs.push('--require', SHIM_FILE);
+                  const isVersionCheck = (origArgs.length === 2 && (origArgs[1] === '-v' || origArgs[1] === '--version'));
+                  if (isVersionCheck) {
+                    newArgs.push('--require', SHIM_FILE, '-p', 'process.version');
+                  } else {
+                    if (!origArgs.includes('--require')) {
+                      newArgs.push('--require', SHIM_FILE);
+                    }
+                    newArgs.push(...origArgs.slice(1));
                   }
-                  newArgs.push(...origArgs.slice(1));
                   options.args = newArgs;
                   return options;
                 }
@@ -824,7 +852,7 @@ object NodeNativeBootstrap {
                   }
                   if (fs.existsSync(binScript)) {
                     options.file = NODE_EXEC;
-                    options.args = [NODE_EXEC, binScript, ...origArgs.slice(1)];
+                    options.args = [NODE_EXEC, '--require', SHIM_FILE, binScript, ...origArgs.slice(1)];
                     return options;
                   }
                 }
@@ -834,7 +862,7 @@ object NodeNativeBootstrap {
                   const info = inspectExecutable(resolved);
                   if (info && info.type === 'node') {
                     options.file = NODE_EXEC;
-                    options.args = [NODE_EXEC, resolved, ...origArgs.slice(1)];
+                    options.args = [NODE_EXEC, '--require', SHIM_FILE, resolved, ...origArgs.slice(1)];
                     return options;
                   }
                   if (info && info.type === 'sh') {
@@ -1009,7 +1037,14 @@ object NodeNativeBootstrap {
         val shim = getAndroidShimFile(context).absolutePath
 
         return when (bin) {
-            "node", "nodejs" -> "\"$launcher\" --require \"$shim\"$rest"
+            "node", "nodejs" -> {
+                val subCmd = rest.trim()
+                if (subCmd == "-v" || subCmd == "--version") {
+                    "\"$launcher\" --require \"$shim\" -p \"process.version\""
+                } else {
+                    "\"$launcher\" --require \"$shim\"$rest"
+                }
+            }
             "npm" -> {
                 val subCmd = rest.trim()
                 if (subCmd == "start" || subCmd == "run start" || subCmd.startsWith("start ") || subCmd.startsWith("run start ")) {
@@ -1023,14 +1058,14 @@ object NodeNativeBootstrap {
                     if (startScript != null && startScript.exists()) {
                         "\"$launcher\" --require \"$shim\" \"${startScript.absolutePath}\""
                     } else {
-                        "\"$launcher\" \"$npmCli\"$rest"
+                        "\"$launcher\" --require \"$shim\" \"$npmCli\"$rest"
                     }
                 } else {
-                    "\"$launcher\" \"$npmCli\"$rest"
+                    "\"$launcher\" --require \"$shim\" \"$npmCli\"$rest"
                 }
             }
-            "npx" -> "\"$launcher\" \"$npxCli\" --yes$rest"
-            "create-react-app" -> "\"$launcher\" \"$npxCli\" --yes create-react-app$rest"
+            "npx" -> "\"$launcher\" --require \"$shim\" \"$npxCli\" --yes$rest"
+            "create-react-app" -> "\"$launcher\" --require \"$shim\" \"$npxCli\" --yes create-react-app$rest"
             "react-scripts" -> {
                 val isStart = rest.contains("start")
                 val targetName = if (isStart) "scripts/start.js" else "bin/react-scripts.js"

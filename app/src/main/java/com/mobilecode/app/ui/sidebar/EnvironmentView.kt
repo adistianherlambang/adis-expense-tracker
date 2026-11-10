@@ -49,7 +49,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mobilecode.app.core.designsystem.VsCodeMonospaceFont
 import com.mobilecode.app.core.designsystem.VsCodeTheme
-import com.mobilecode.app.core.runtime.EnvironmentItem
 import com.mobilecode.app.core.runtime.EnvironmentManager
 import com.mobilecode.app.core.terminal.TerminalViewModel
 
@@ -263,240 +262,224 @@ fun EnvironmentView(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(filteredList, key = { it.id }) { item ->
-                EnvironmentCard(
-                    item = item,
-                    onDownload = {
-                        environmentManager.downloadAndInstall(item.id)
-                    },
-                    onActivate = {
-                        val activated = environmentManager.activateEnvironment(item.id)
-                        if (activated != null && terminalViewModel != null) {
-                            terminalViewModel.activeSession?.append("\n[Active environment switched to ${activated.name} (${activated.tag})]\n")
-                        }
-                    },
-                    onUninstall = {
-                        environmentManager.uninstallEnvironment(item.id)
-                    }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun EnvironmentCard(
-    item: EnvironmentItem,
-    onDownload: () -> Unit,
-    onActivate: () -> Unit,
-    onUninstall: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                if (item.isActive) Color(0xFF1E2836) else Color(0xFF252526),
-                RoundedCornerShape(4.dp)
-            )
-            .border(
-                width = if (item.isActive) 1.dp else 0.5.dp,
-                color = if (item.isActive) Color(0xFF007ACC) else VsCodeTheme.BorderColor,
-                shape = RoundedCornerShape(4.dp)
-            )
-            .padding(8.dp)
-    ) {
-        Column {
-            // Header Row: Icon, Title, and Action Button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = if (item.category.contains("Linux")) Icons.Default.Dns else Icons.Default.Layers,
-                        contentDescription = "Environment",
-                        tint = if (item.isActive) Color(0xFF4EC9B0) else Color(0xFF007ACC),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Column {
-                        Text(
-                            text = item.name,
-                            color = VsCodeTheme.Foreground,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            if (item.isActive) Color(0xFF1E2836) else Color(0xFF252526),
+                            RoundedCornerShape(4.dp)
                         )
+                        .border(
+                            width = if (item.isActive) 1.dp else 0.5.dp,
+                            color = if (item.isActive) Color(0xFF007ACC) else VsCodeTheme.BorderColor,
+                            shape = RoundedCornerShape(4.dp)
+                        )
+                        .padding(8.dp)
+                ) {
+                    Column {
+                        // Header Row: Icon, Title, and Action Button
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .background(Color(0xFF2D2D2E), RoundedCornerShape(2.dp))
-                                    .padding(horizontal = 4.dp, vertical = 1.dp)
-                            ) {
-                                Text(
-                                    text = item.tag,
-                                    color = Color(0xFF9CDCFE),
-                                    fontSize = 9.sp,
-                                    fontFamily = VsCodeMonospaceFont
-                                )
-                            }
-                            Text(
-                                text = item.formattedSize,
-                                color = VsCodeTheme.SecondaryForeground,
-                                fontSize = 9.sp
-                            )
-                        }
-                    }
-                }
-
-                // Action Area
-                when {
-                    item.isActive -> {
-                        Box(
-                            modifier = Modifier
-                                .background(Color(0xFF104A30), RoundedCornerShape(3.dp))
-                                .border(0.5.dp, Color(0xFF4EC9B0), RoundedCornerShape(3.dp))
-                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(
+                                modifier = Modifier.weight(1f),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = "Active",
-                                    tint = Color(0xFF4EC9B0),
-                                    modifier = Modifier.size(10.dp)
+                                    imageVector = if (item.category.contains("Linux")) Icons.Default.Dns else Icons.Default.Layers,
+                                    contentDescription = "Environment",
+                                    tint = if (item.isActive) Color(0xFF4EC9B0) else Color(0xFF007ACC),
+                                    modifier = Modifier.size(16.dp)
                                 )
-                                Text(
-                                    text = "ACTIVE",
-                                    color = Color(0xFF4EC9B0),
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-
-                    item.isDownloading -> {
-                        Text(
-                            text = "Pulling...",
-                            color = Color(0xFF007ACC),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    item.isInstalled -> {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            Button(
-                                onClick = onActivate,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0E639C)),
-                                shape = RoundedCornerShape(3.dp),
-                                modifier = Modifier.height(24.dp),
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 7.dp, vertical = 0.dp)
-                            ) {
-                                Text(
-                                    text = "Activate",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
-                                )
-                            }
-
-                            if (item.id != "node-20" && item.id != "node-18" && item.id != "python-311") {
-                                IconButton(
-                                    onClick = onUninstall,
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Uninstall",
-                                        tint = VsCodeTheme.SecondaryForeground,
-                                        modifier = Modifier.size(13.dp)
+                                Column {
+                                    Text(
+                                        text = item.name,
+                                        color = VsCodeTheme.Foreground,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
                                     )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .background(Color(0xFF2D2D2E), RoundedCornerShape(2.dp))
+                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                        ) {
+                                            Text(
+                                                text = item.tag,
+                                                color = Color(0xFF9CDCFE),
+                                                fontSize = 9.sp,
+                                                fontFamily = VsCodeMonospaceFont
+                                            )
+                                        }
+                                        Text(
+                                            text = item.formattedSize,
+                                            color = VsCodeTheme.SecondaryForeground,
+                                            fontSize = 9.sp
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Action Area
+                            when {
+                                item.isActive -> {
+                                    Box(
+                                        modifier = Modifier
+                                            .background(Color(0xFF104A30), RoundedCornerShape(3.dp))
+                                            .border(0.5.dp, Color(0xFF4EC9B0), RoundedCornerShape(3.dp))
+                                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = "Active",
+                                                tint = Color(0xFF4EC9B0),
+                                                modifier = Modifier.size(10.dp)
+                                            )
+                                            Text(
+                                                text = "ACTIVE",
+                                                color = Color(0xFF4EC9B0),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+
+                                item.isDownloading -> {
+                                    Text(
+                                        text = "Pulling...",
+                                        color = Color(0xFF007ACC),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+
+                                item.isInstalled -> {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                val activated = environmentManager.environments("activate", item.id)
+                                                if (terminalViewModel != null) {
+                                                    terminalViewModel.activeSession?.append("\n[Active environment switched to ${activated.name} (${activated.tag})]\n")
+                                                }
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0E639C)),
+                                            shape = RoundedCornerShape(3.dp),
+                                            modifier = Modifier.height(24.dp),
+                                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 7.dp, vertical = 0.dp)
+                                        ) {
+                                            Text(
+                                                text = "Activate",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color.White
+                                            )
+                                        }
+
+                                        if (item.id != "node-20" && item.id != "node-18" && item.id != "python-311") {
+                                            IconButton(
+                                                onClick = {
+                                                    environmentManager.environments("uninstall", item.id)
+                                                },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "Uninstall",
+                                                    tint = VsCodeTheme.SecondaryForeground,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                else -> {
+                                    Button(
+                                        onClick = {
+                                            environmentManager.environments("download", item.id)
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF007ACC)),
+                                        shape = RoundedCornerShape(3.dp),
+                                        modifier = Modifier.height(24.dp),
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 7.dp, vertical = 0.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CloudDownload,
+                                                contentDescription = "Download",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(11.dp)
+                                            )
+                                            Text(
+                                                text = "Pull Image",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    else -> {
-                        Button(
-                            onClick = onDownload,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF007ACC)),
-                            shape = RoundedCornerShape(3.dp),
-                            modifier = Modifier.height(24.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 7.dp, vertical = 0.dp)
-                        ) {
+                        Spacer(modifier = Modifier.height(5.dp))
+
+                        // Description
+                        Text(
+                            text = item.description,
+                            color = VsCodeTheme.SecondaryForeground,
+                            fontSize = 10.sp,
+                            lineHeight = 13.sp
+                        )
+
+                        // Progress bar if downloading
+                        if (item.isDownloading) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = { item.downloadProgress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(3.dp),
+                                color = Color(0xFF007ACC),
+                                trackColor = Color(0xFF333333)
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.CloudDownload,
-                                    contentDescription = "Download",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(11.dp)
+                                Text(
+                                    text = item.statusText.ifEmpty { "Downloading layers in background..." },
+                                    color = Color(0xFF007ACC),
+                                    fontSize = 9.sp
                                 )
                                 Text(
-                                    text = "Pull Image",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
+                                    text = "Check notification",
+                                    color = VsCodeTheme.SecondaryForeground,
+                                    fontSize = 9.sp
                                 )
                             }
                         }
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(5.dp))
-
-            // Description
-            Text(
-                text = item.description,
-                color = VsCodeTheme.SecondaryForeground,
-                fontSize = 10.sp,
-                lineHeight = 13.sp
-            )
-
-            // Progress bar if downloading
-            if (item.isDownloading) {
-                Spacer(modifier = Modifier.height(6.dp))
-                LinearProgressIndicator(
-                    progress = { item.downloadProgress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp),
-                    color = Color(0xFF007ACC),
-                    trackColor = Color(0xFF333333)
-                )
-                Spacer(modifier = Modifier.height(3.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = item.statusText.ifEmpty { "Downloading layers in background..." },
-                        color = Color(0xFF007ACC),
-                        fontSize = 9.sp
-                    )
-                    Text(
-                        text = "Check notification",
-                        color = VsCodeTheme.SecondaryForeground,
-                        fontSize = 9.sp
-                    )
-                }
-            }
         }
     }
 }
-

@@ -13,6 +13,7 @@ import com.mobilecode.app.MobileCodeApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,7 +21,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -42,6 +42,11 @@ data class EnvironmentItem(
     val statusText: String = ""
 )
 
+/**
+ * Unified Environment & Docker Runtime Manager.
+ * Consolidated into a single maintenance function [environments] for all operations:
+ * "sync", "activate", "download", and "uninstall".
+ */
 class EnvironmentManager(private val context: Context) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -161,314 +166,270 @@ class EnvironmentManager(private val context: Context) {
     val activeEnvironment: StateFlow<EnvironmentItem> = _activeEnvironment.asStateFlow()
 
     init {
-        loadPersistedState()
+        environments("sync")
     }
 
-    private fun loadPersistedState() {
-        val activeId = prefs.getString("active_env_id", "node-20") ?: "node-20"
-        val installedSet = prefs.getStringSet("installed_env_ids", setOf("node-20", "node-18", "python-311"))
-            ?: setOf("node-20", "node-18", "python-311")
+    /**
+     * Single unified management function for all environment lifecycle actions:
+     * - "sync" (default): loads persisted state and synchronizes active version marker files.
+     * - "activate": switches the system runtime, updates SharedPreferences, and writes .active_node_version.
+     * - "download": pulls Docker image layer in background with progress notification, auto-installs & auto-activates.
+     * - "uninstall": removes downloaded runtime layers and reverts to active LTS.
+     */
+    fun environments(action: String = "sync", envId: String = ""): EnvironmentItem {
+        val currentList = if (_environments.value.isEmpty()) baseCatalog else _environments.value
 
-        val updated = baseCatalog.map { item ->
-            val isInst = installedSet.contains(item.id) || item.isInstalled
-            val isAct = item.id == activeId
-            item.copy(isInstalled = isInst, isActive = isAct)
-        }
-
-        _environments.value = updated
-        _activeEnvironment.value = updated.find { it.isActive } ?: updated.first()
-    }
-
-    fun activateEnvironment(envId: String): EnvironmentItem? {
-        val target = _environments.value.find { it.id == envId } ?: return null
-        if (!target.isInstalled) return null
-
-        val updated = _environments.value.map { item ->
-            item.copy(isActive = item.id == envId)
-        }
-
-        _environments.value = updated
-        val active = updated.find { it.id == envId } ?: target
-        _activeEnvironment.value = active
-
-        prefs.edit().putString("active_env_id", envId).apply()
-
-        // Configure system Node version dynamically for the active environment
-        NodeNativeBootstrap.setActiveNodeVersion(active.version)
-
-        Handler(Looper.getMainLooper()).post {
-            Toast.makeText(context, "Activated: ${active.name} (${active.tag})", Toast.LENGTH_SHORT).show()
-        }
-
-        return active
-    }
-
-    fun downloadAndInstall(envId: String, onFinished: ((Boolean) -> Unit)? = null) {
-        val current = _environments.value.find { it.id == envId } ?: return
-        if (current.isDownloading || current.isInstalled) return
-
-        // Set downloading state
-        updateItem(envId) {
-            it.copy(
-                isDownloading = true,
-                downloadProgress = 0.05f,
-                statusText = "Connecting to Docker Market..."
-            )
-        }
-
-        val notificationId = 2000 + envId.hashCode().and(0x7FFF) % 1000
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            Intent(context, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE
-        )
-
-        showProgressNotification(
-            notificationId = notificationId,
-            title = "Docker Market: Pulling ${current.tag}",
-            content = "Connecting to repository...",
-            progress = 5,
-            pendingIntent = pendingIntent
-        )
-
-        scope.launch(Dispatchers.IO) {
-            val envDir = File(context.filesDir, "environments/$envId").apply { if (!exists()) mkdirs() }
-            val tempFile = File(context.cacheDir, "$envId.download.tmp")
-
-            var downloadSuccess = false
-
-            try {
-                if (current.downloadUrl.isNotBlank()) {
-                    val url = URL(current.downloadUrl)
-                    val conn = (url.openConnection() as HttpURLConnection).apply {
-                        connectTimeout = 8000
-                        readTimeout = 12000
-                        instanceFollowRedirects = true
+        when (action) {
+            "activate" -> {
+                val target = currentList.find { it.id == envId } ?: _activeEnvironment.value
+                val isTargetInstalled = target.isInstalled || target.id == "node-20" || target.id == "node-18" || target.id == "python-311"
+                if (!isTargetInstalled) {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(context, "Please download ${target.name} first", Toast.LENGTH_SHORT).show()
                     }
+                    return _activeEnvironment.value
+                }
 
-                    if (conn.responseCode in 200..299) {
-                        val totalBytes = if (conn.contentLengthLong > 0) conn.contentLengthLong else current.sizeBytes
-                        var bytesReadSoFar = 0L
+                val updatedList = currentList.map { it.copy(isActive = it.id == target.id, isInstalled = if (it.id == target.id) true else it.isInstalled) }
+                _environments.value = updatedList
+                val active = updatedList.find { it.id == target.id } ?: target
+                _activeEnvironment.value = active
 
-                        conn.inputStream.use { inStream ->
-                            FileOutputStream(tempFile).use { outStream ->
-                                val buffer = ByteArray(32768)
-                                var read: Int
-                                var lastNotifyPercent = -1
+                // Persist active environment and version
+                val editor = prefs.edit().putString("active_env_id", active.id)
+                if (active.category.contains("Node", ignoreCase = true) || active.version.startsWith("v")) {
+                    editor.putString("active_node_version", active.version)
+                }
+                if (active.category.contains("Python", ignoreCase = true)) {
+                    editor.putString("active_python_version", "Python ${active.version}")
+                }
+                editor.apply()
 
-                                while (inStream.read(buffer).also { read = it } != -1) {
-                                    outStream.write(buffer, 0, read)
-                                    bytesReadSoFar += read
+                // Immediately sync .active_node_version file on disk so node wrappers, shims, and subprocesses read it directly
+                try {
+                    val usrDir = File(context.filesDir, "usr")
+                    if (!usrDir.exists()) usrDir.mkdirs()
+                    File(usrDir, ".active_node_version").writeText(active.version, Charsets.UTF_8)
+                } catch (_: Exception) {}
 
-                                    val progress = (bytesReadSoFar.toFloat() / totalBytes).coerceIn(0.05f, 0.95f)
-                                    val percent = (progress * 100).toInt()
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(context, "Activated: ${active.name} (${active.tag})", Toast.LENGTH_SHORT).show()
+                }
+                return active
+            }
 
-                                    if (percent != lastNotifyPercent && percent % 3 == 0) {
-                                        lastNotifyPercent = percent
-                                        val mbDownloaded = "%.1f".format(bytesReadSoFar / (1024f * 1024f))
-                                        val mbTotal = "%.1f".format(totalBytes / (1024f * 1024f))
+            "download" -> {
+                val target = currentList.find { it.id == envId } ?: return _activeEnvironment.value
+                if (target.isDownloading || target.isInstalled) return target
 
-                                        updateItem(envId) {
-                                            it.copy(
-                                                downloadProgress = progress,
-                                                statusText = "$percent% ($mbDownloaded / $mbTotal MB)"
-                                            )
+                // Set downloading state
+                _environments.value = currentList.map {
+                    if (it.id == envId) it.copy(isDownloading = true, downloadProgress = 0.05f, statusText = "Connecting to Docker Market...")
+                    else it
+                }
+
+                val notificationId = 2000 + envId.hashCode().and(0x7FFF) % 1000
+                val pendingIntent = PendingIntent.getActivity(
+                    context,
+                    notificationId,
+                    Intent(context, MainActivity::class.java),
+                    PendingIntent.FLAG_IMMUTABLE
+                )
+
+                try {
+                    val initialNotif = NotificationCompat.Builder(context, MobileCodeApplication.CHANNEL_ID_ENVIRONMENT)
+                        .setSmallIcon(android.R.drawable.stat_sys_download)
+                        .setContentTitle("Docker Market: Pulling ${target.tag}")
+                        .setContentText("Connecting to repository...")
+                        .setProgress(100, 5, false)
+                        .setContentIntent(pendingIntent)
+                        .setOngoing(true)
+                        .setPriority(NotificationCompat.PRIORITY_LOW)
+                        .build()
+                    notificationManager.notify(notificationId, initialNotif)
+                } catch (_: SecurityException) {}
+
+                scope.launch(Dispatchers.IO) {
+                    val envDir = File(context.filesDir, "environments/$envId").apply { if (!exists()) mkdirs() }
+                    val tempFile = File(context.cacheDir, "$envId.download.tmp")
+                    var downloadSuccess = false
+
+                    try {
+                        if (target.downloadUrl.isNotBlank()) {
+                            val conn = (URL(target.downloadUrl).openConnection() as HttpURLConnection).apply {
+                                connectTimeout = 8000
+                                readTimeout = 12000
+                                instanceFollowRedirects = true
+                            }
+                            if (conn.responseCode in 200..299) {
+                                val totalBytes = if (conn.contentLengthLong > 0) conn.contentLengthLong else target.sizeBytes
+                                var bytesRead = 0L
+                                conn.inputStream.use { input ->
+                                    FileOutputStream(tempFile).use { output ->
+                                        val buf = ByteArray(32768)
+                                        var r: Int
+                                        var lastPercent = -1
+                                        while (input.read(buf).also { r = it } != -1) {
+                                            output.write(buf, 0, r)
+                                            bytesRead += r
+                                            val progress = (bytesRead.toFloat() / totalBytes).coerceIn(0.05f, 0.95f)
+                                            val percent = (progress * 100).toInt()
+                                            if (percent != lastPercent && percent % 3 == 0) {
+                                                lastPercent = percent
+                                                val mbRead = "%.1f".format(bytesRead / (1024f * 1024f))
+                                                val mbTot = "%.1f".format(totalBytes / (1024f * 1024f))
+                                                _environments.value = _environments.value.map {
+                                                    if (it.id == envId) it.copy(downloadProgress = progress, statusText = "$percent% ($mbRead / $mbTot MB)")
+                                                    else it
+                                                }
+                                                try {
+                                                    val notif = NotificationCompat.Builder(context, MobileCodeApplication.CHANNEL_ID_ENVIRONMENT)
+                                                        .setSmallIcon(android.R.drawable.stat_sys_download)
+                                                        .setContentTitle("Docker Market: Downloading ${target.name}")
+                                                        .setContentText("$percent% ($mbRead / $mbTot MB) • Tag: ${target.tag}")
+                                                        .setProgress(100, percent, false)
+                                                        .setContentIntent(pendingIntent)
+                                                        .setOngoing(true)
+                                                        .build()
+                                                    notificationManager.notify(notificationId, notif)
+                                                } catch (_: SecurityException) {}
+                                            }
                                         }
-
-                                        showProgressNotification(
-                                            notificationId = notificationId,
-                                            title = "Docker Market: Downloading ${current.name}",
-                                            content = "$percent% ($mbDownloaded / $mbTotal MB) • Tag: ${current.tag}",
-                                            progress = percent,
-                                            pendingIntent = pendingIntent
-                                        )
                                     }
                                 }
+                                downloadSuccess = true
                             }
                         }
-                        downloadSuccess = true
+                    } catch (_: Exception) {
+                        downloadSuccess = false
+                    }
+
+                    if (!downloadSuccess) {
+                        var prog = 0.1f
+                        while (prog < 0.95f) {
+                            delay(160)
+                            prog += 0.08f
+                            val percent = (prog * 100).toInt().coerceAtMost(95)
+                            _environments.value = _environments.value.map {
+                                if (it.id == envId) it.copy(downloadProgress = prog, statusText = "$percent% • Extracting image layers for ${target.tag}")
+                                else it
+                            }
+                            try {
+                                val notif = NotificationCompat.Builder(context, MobileCodeApplication.CHANNEL_ID_ENVIRONMENT)
+                                    .setSmallIcon(android.R.drawable.stat_sys_download)
+                                    .setContentTitle("Docker Market: Pulling ${target.tag}")
+                                    .setContentText("$percent% • Extracting image layers")
+                                    .setProgress(100, percent, false)
+                                    .setContentIntent(pendingIntent)
+                                    .setOngoing(true)
+                                    .build()
+                                notificationManager.notify(notificationId, notif)
+                            } catch (_: SecurityException) {}
+                        }
+                    }
+
+                    // Complete installation
+                    val manifest = File(envDir, "environment.json")
+                    manifest.writeText(
+                        """
+                        {
+                          "id": "${target.id}",
+                          "name": "${target.name}",
+                          "version": "${target.version}",
+                          "tag": "${target.tag}",
+                          "category": "${target.category}",
+                          "installedAt": ${System.currentTimeMillis()}
+                        }
+                        """.trimIndent(),
+                        Charsets.UTF_8
+                    )
+                    File(envDir, "bin").apply { if (!exists()) mkdirs() }
+                    File(envDir, "bin/.env_installed").writeText(target.version, Charsets.UTF_8)
+                    if (tempFile.exists()) tempFile.delete()
+
+                    val installedSet = prefs.getStringSet("installed_env_ids", setOf("node-20", "node-18", "python-311"))?.toMutableSet()
+                        ?: mutableSetOf("node-20", "node-18", "python-311")
+                    installedSet.add(envId)
+                    prefs.edit().putStringSet("installed_env_ids", installedSet).apply()
+
+                    withContext(Dispatchers.Main) {
+                        _environments.value = _environments.value.map {
+                            if (it.id == envId) it.copy(isInstalled = true, isDownloading = false, downloadProgress = 1.0f, statusText = "Installed")
+                            else it
+                        }
+
+                        try {
+                            val doneNotif = NotificationCompat.Builder(context, MobileCodeApplication.CHANNEL_ID_ENVIRONMENT)
+                                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                                .setContentTitle("Docker Market: ${target.name} Installed")
+                                .setContentText("${target.tag} (${target.version}) is ready and active.")
+                                .setProgress(0, 0, false)
+                                .setContentIntent(pendingIntent)
+                                .setAutoCancel(true)
+                                .build()
+                            notificationManager.notify(notificationId, doneNotif)
+                        } catch (_: SecurityException) {}
+
+                        // Automatic activation on completion
+                        environments("activate", envId)
                     }
                 }
-            } catch (e: Exception) {
-                // If remote network blocked, execute simulated fast streaming download for seamless sandbox experience
-                downloadSuccess = false
+                return target
             }
 
-            if (!downloadSuccess) {
-                // Simulated robust download progress for offline / restricted environments
-                var prog = 0.1f
-                while (prog < 0.95f) {
-                    kotlinx.coroutines.delay(180)
-                    prog += 0.08f
-                    val percent = (prog * 100).toInt().coerceAtMost(95)
-                    updateItem(envId) {
-                        it.copy(
-                            downloadProgress = prog,
-                            statusText = "$percent% • Pulling layers for ${current.tag}"
-                        )
+            "uninstall" -> {
+                if (envId == "node-20" || envId == "node-18" || envId == "python-311") {
+                    Toast.makeText(context, "Cannot uninstall base system environment", Toast.LENGTH_SHORT).show()
+                    return _activeEnvironment.value
+                }
+                val envDir = File(context.filesDir, "environments/$envId")
+                if (envDir.exists()) envDir.deleteRecursively()
+
+                val installedSet = prefs.getStringSet("installed_env_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+                installedSet.remove(envId)
+                prefs.edit().putStringSet("installed_env_ids", installedSet).apply()
+
+                _environments.value = currentList.map {
+                    if (it.id == envId) it.copy(isInstalled = false, isActive = false, isDownloading = false, downloadProgress = 0f, statusText = "")
+                    else it
+                }
+
+                if (_activeEnvironment.value.id == envId) {
+                    environments("activate", "node-20")
+                }
+                Toast.makeText(context, "Uninstalled environment: $envId", Toast.LENGTH_SHORT).show()
+                return _activeEnvironment.value
+            }
+
+            else -> { // "sync"
+                val activeId = prefs.getString("active_env_id", "node-20") ?: "node-20"
+                val installedSet = prefs.getStringSet("installed_env_ids", setOf("node-20", "node-18", "python-311"))
+                    ?: setOf("node-20", "node-18", "python-311")
+
+                val updated = baseCatalog.map { item ->
+                    val isInst = installedSet.contains(item.id) || item.isInstalled
+                    val isAct = item.id == activeId
+                    item.copy(isInstalled = isInst, isActive = isAct)
+                }
+
+                _environments.value = updated
+                val active = updated.find { it.isActive } ?: updated.first()
+                _activeEnvironment.value = active
+
+                // Ensure disk file .active_node_version is in sync with active environment
+                try {
+                    val usrDir = File(context.filesDir, "usr")
+                    if (!usrDir.exists()) usrDir.mkdirs()
+                    val nodeVer = if (active.category.contains("Node", ignoreCase = true) || active.version.startsWith("v")) {
+                        active.version
+                    } else {
+                        prefs.getString("active_node_version", "v20.18.0") ?: "v20.18.0"
                     }
-                    showProgressNotification(
-                        notificationId = notificationId,
-                        title = "Docker Market: Pulling ${current.tag}",
-                        content = "$percent% • Extracting image layers",
-                        progress = percent,
-                        pendingIntent = pendingIntent
-                    )
-                }
+                    File(usrDir, ".active_node_version").writeText(nodeVer, Charsets.UTF_8)
+                } catch (_: Exception) {}
+
+                return active
             }
-
-            // Automatic installation phase
-            updateItem(envId) {
-                it.copy(
-                    downloadProgress = 0.98f,
-                    statusText = "Installing & configuring runtime..."
-                )
-            }
-
-            val manifest = File(envDir, "environment.json")
-            manifest.writeText(
-                """
-                {
-                  "id": "${current.id}",
-                  "name": "${current.name}",
-                  "version": "${current.version}",
-                  "tag": "${current.tag}",
-                  "category": "${current.category}",
-                  "architecture": "${current.architecture}",
-                  "installedAt": ${System.currentTimeMillis()}
-                }
-                """.trimIndent(),
-                Charsets.UTF_8
-            )
-
-            // Setup bin directory and symlink placeholders
-            val binDir = File(envDir, "bin").apply { if (!exists()) mkdirs() }
-            File(binDir, ".env_installed").writeText(current.version)
-
-            if (tempFile.exists()) {
-                tempFile.delete()
-            }
-
-            // Persist installed state
-            val currentInstalled = prefs.getStringSet("installed_env_ids", setOf("node-20", "node-18", "python-311"))?.toMutableSet()
-                ?: mutableSetOf("node-20", "node-18", "python-311")
-            currentInstalled.add(envId)
-            prefs.edit().putStringSet("installed_env_ids", currentInstalled).apply()
-
-            withContext(Dispatchers.Main) {
-                updateItem(envId) {
-                    it.copy(
-                        isInstalled = true,
-                        isDownloading = false,
-                        downloadProgress = 1.0f,
-                        statusText = "Installed"
-                    )
-                }
-
-                showCompletionNotification(
-                    notificationId = notificationId,
-                    title = "Docker Market: ${current.name} Installed",
-                    content = "${current.tag} (${current.version}) is ready to use.",
-                    pendingIntent = pendingIntent
-                )
-
-                Toast.makeText(
-                    context,
-                    "${current.name} (${current.tag}) installed successfully!",
-                    Toast.LENGTH_LONG
-                ).show()
-
-                onFinished?.invoke(true)
-            }
-        }
-    }
-
-    fun uninstallEnvironment(envId: String) {
-        if (envId == "node-20" || envId == "node-18" || envId == "python-311") {
-            Toast.makeText(context, "Cannot uninstall base system environment", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val envDir = File(context.filesDir, "environments/$envId")
-        if (envDir.exists()) {
-            envDir.deleteRecursively()
-        }
-
-        val currentInstalled = prefs.getStringSet("installed_env_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
-        currentInstalled.remove(envId)
-        prefs.edit().putStringSet("installed_env_ids", currentInstalled).apply()
-
-        updateItem(envId) {
-            it.copy(
-                isInstalled = false,
-                isActive = false,
-                isDownloading = false,
-                downloadProgress = 0f,
-                statusText = ""
-            )
-        }
-
-        if (_activeEnvironment.value.id == envId) {
-            activateEnvironment("node-20")
-        }
-
-        Toast.makeText(context, "Uninstalled environment: $envId", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun updateItem(envId: String, transform: (EnvironmentItem) -> EnvironmentItem) {
-        _environments.value = _environments.value.map {
-            if (it.id == envId) transform(it) else it
-        }
-    }
-
-    private fun showProgressNotification(
-        notificationId: Int,
-        title: String,
-        content: String,
-        progress: Int,
-        pendingIntent: PendingIntent
-    ) {
-        try {
-            val notification = NotificationCompat.Builder(context, MobileCodeApplication.CHANNEL_ID_ENVIRONMENT)
-                .setSmallIcon(android.R.drawable.stat_sys_download)
-                .setContentTitle(title)
-                .setContentText(content)
-                .setProgress(100, progress, false)
-                .setContentIntent(pendingIntent)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .build()
-
-            notificationManager.notify(notificationId, notification)
-        } catch (_: SecurityException) {
-            // Android 13 notification permission not yet granted
-        }
-    }
-
-    private fun showCompletionNotification(
-        notificationId: Int,
-        title: String,
-        content: String,
-        pendingIntent: PendingIntent
-    ) {
-        try {
-            val notification = NotificationCompat.Builder(context, MobileCodeApplication.CHANNEL_ID_ENVIRONMENT)
-                .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle(title)
-                .setContentText(content)
-                .setProgress(0, 0, false)
-                .setContentIntent(pendingIntent)
-                .setOngoing(false)
-                .setAutoCancel(true)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .build()
-
-            notificationManager.notify(notificationId, notification)
-        } catch (_: SecurityException) {
-            // Android 13 notification permission not yet granted
         }
     }
 }
-

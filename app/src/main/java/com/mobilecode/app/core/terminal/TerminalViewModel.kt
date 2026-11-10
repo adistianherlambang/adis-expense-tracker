@@ -1,5 +1,6 @@
 package com.mobilecode.app.core.terminal
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
@@ -678,7 +679,14 @@ class TerminalViewModel(
             env["MOBILE_CODE_NPM_CLI"] = npmCliJs.absolutePath
             env["MOBILE_CODE_NPX_CLI"] = npxCliJs.absolutePath
             env["MOBILE_CODE_NODE_LAUNCHER"] = NodeNativeBootstrap.getNativeNodeLauncher(context).absolutePath
-            env["MOBILE_CODE_NODE_VERSION"] = NodeNativeBootstrap.getActiveNodeVersion()
+            val envPrefs = context.getSharedPreferences("mobile_code_environments", Context.MODE_PRIVATE)
+            val currentActiveVer = envPrefs.getString("active_node_version", null)
+                ?: when (envPrefs.getString("active_env_id", "node-20")) {
+                    "node-22" -> "v22.14.0"
+                    "node-18" -> "v18.20.4"
+                    else -> "v20.18.0"
+                }
+            env["MOBILE_CODE_NODE_VERSION"] = currentActiveVer
 
             val homeDir = File(context.filesDir.canonicalFile, "home").apply { if (!exists()) mkdirs() }
             env["HOME"] = homeDir.absolutePath
