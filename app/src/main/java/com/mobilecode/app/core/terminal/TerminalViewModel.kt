@@ -224,21 +224,66 @@ class TerminalViewModel(
         }
     }
 
+    fun sendRawInputToRunningProcess(data: String) {
+        val session = activeSession ?: return
+        val proc = session.runningProcess ?: return
+        if (proc.isAlive) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    proc.outputStream.write(data.toByteArray(Charsets.UTF_8))
+                    proc.outputStream.flush()
+                } catch (e: Exception) {
+                    session.append("[Input write error: ${e.message}]\n")
+                }
+            }
+        }
+    }
+
+    fun submitInteractiveInput(text: String) {
+        val session = activeSession ?: return
+        val runningProc = session.runningProcess
+        if (runningProc != null && runningProc.isAlive) {
+            _commandInput.value = ""
+            session.append("$text\n")
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    runningProc.outputStream.write("$text\n".toByteArray(Charsets.UTF_8))
+                    runningProc.outputStream.flush()
+                } catch (e: Exception) {
+                    session.append("[Input write error: ${e.message}]\n")
+                }
+            }
+        } else {
+            sendCommand(text)
+        }
+    }
+
     fun sendInput(data: String) {
+        val session = activeSession
+        val proc = session?.runningProcess
+        if (session != null && proc != null && proc.isAlive) {
+            when (data) {
+                "\n", "\r" -> submitCurrentCommand()
+                "\u0003" -> {
+                    session.killRunningProcess()
+                    _commandInput.value = ""
+                    session.append("^C\n[Process terminated]\n")
+                }
+                "\u001b[A", "\u001b[B", "\u001b[C", "\u001b[D", "\t", "\u001b" -> {
+                    sendRawInputToRunningProcess(data)
+                }
+                else -> appendToCommandInput(data)
+            }
+            return
+        }
+
         when (data) {
             "\n", "\r" -> submitCurrentCommand()
             "\t" -> autoCompleteCommandInput()
             "\u001b[A" -> navigateHistoryUp()
             "\u001b[B" -> navigateHistoryDown()
             "\u0003" -> {
-                val session = activeSession ?: return
-                val proc = session.runningProcess
-                if (proc != null && proc.isAlive) {
-                    session.killRunningProcess()
-                    _commandInput.value = ""
-                    session.append("^C\n[Process terminated]\n")
-                    return
-                }
+                if (session == null) return
                 if (session.replMode != "SH") {
                     session.replMode = "SH"
                     session.append("^C\n[Exited REPL]\n")

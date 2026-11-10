@@ -146,6 +146,22 @@ fun TerminalWebView(
         val lines = normalized.split("\n")
         val endsWithNewline = normalized.endsWith("\n")
 
+        if (isRunning) {
+            val linesToSubmit = if (endsWithNewline) lines.dropLast(1) else lines.dropLast(1)
+            linesToSubmit.forEach { line ->
+                val cleanLine = line.trimEnd('\r', '\n')
+                terminalViewModel.updateCommandInput(cleanLine)
+                terminalViewModel.submitCurrentCommand()
+            }
+            if (endsWithNewline) {
+                terminalViewModel.updateCommandInput("")
+            } else {
+                val remainder = lines.last().trimEnd('\r', '\n')
+                terminalViewModel.updateCommandInput(remainder)
+            }
+            return
+        }
+
         if (lines.size == 2 && lines[0].isEmpty() && lines[1].isEmpty()) {
             terminalViewModel.sendCommand("")
         } else {
@@ -165,7 +181,6 @@ fun TerminalWebView(
     }
 
     fun pasteIntoTerminal() {
-        if (isRunning) return
         val clip = clipboardManager.getText()?.text ?: return
         if (clip.isEmpty()) return
         val normalized = clip.replace("\r\n", "\n")
@@ -223,15 +238,39 @@ fun TerminalWebView(
                         }
                     }
                     Key.V -> {
-                        if (!isRunning) pasteIntoTerminal()
+                        pasteIntoTerminal()
                         true
                     }
                     else -> false
                 }
             } else if (keyEvent.key == Key.Enter || keyEvent.key == Key.NumPadEnter) {
-                if (!isRunning) {
-                    terminalViewModel.submitCurrentCommand()
+                terminalViewModel.submitCurrentCommand()
+                true
+            } else if (keyEvent.key == Key.DirectionUp) {
+                if (isRunning) {
+                    terminalViewModel.sendInput("\u001b[A")
+                } else {
+                    terminalViewModel.navigateHistoryUp()
                 }
+                true
+            } else if (keyEvent.key == Key.DirectionDown) {
+                if (isRunning) {
+                    terminalViewModel.sendInput("\u001b[B")
+                } else {
+                    terminalViewModel.navigateHistoryDown()
+                }
+                true
+            } else if (keyEvent.key == Key.DirectionLeft && isRunning) {
+                terminalViewModel.sendInput("\u001b[D")
+                true
+            } else if (keyEvent.key == Key.DirectionRight && isRunning) {
+                terminalViewModel.sendInput("\u001b[C")
+                true
+            } else if (keyEvent.key == Key.Tab && isRunning) {
+                terminalViewModel.sendInput("\t")
+                true
+            } else if (keyEvent.key == Key.Escape && isRunning) {
+                terminalViewModel.sendInput("\u001b")
                 true
             } else {
                 false
@@ -326,13 +365,39 @@ fun TerminalWebView(
                 if (isRunning) {
                     Row(
                         modifier = Modifier
+                            .background(Color(0xFF0E639C), RoundedCornerShape(3.dp))
+                            .clickable {
+                                terminalViewModel.submitCurrentCommand()
+                            }
+                            .padding(horizontal = 7.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Send",
+                            tint = Color.White,
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Text(
+                            text = "Send",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(3.dp))
+
+                    Row(
+                        modifier = Modifier
                             .background(Color(0xFFE51400), RoundedCornerShape(3.dp))
                             .clickable {
                                 terminalViewModel.sendInput("\u0003")
                             }
-                            .padding(horizontal = 7.dp, vertical = 2.dp),
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Stop,
@@ -341,13 +406,15 @@ fun TerminalWebView(
                             modifier = Modifier.size(11.dp)
                         )
                         Text(
-                            text = "Stop (^C)",
+                            text = "^C",
                             color = Color.White,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
-                    Spacer(modifier = Modifier.width(4.dp))
+
+                    Spacer(modifier = Modifier.width(3.dp))
+
                     Text(
                         text = "● Running",
                         color = Color(0xFF4EC9B0),
@@ -391,36 +458,71 @@ fun TerminalWebView(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                val quickCommands = listOf(
-                    "node -v",
-                    "python --version",
-                    "npm init -y",
-                    "pip list",
-                    "ls -la",
-                    "pwd",
-                    "verify-env",
-                    "sandbox",
-                    "git status",
-                    "help",
-                    "clear"
-                )
-                quickCommands.forEach { qCmd ->
-                    Box(
-                        modifier = Modifier
-                            .alpha(if (isRunning) 0.35f else 1f)
-                            .background(Color(0xFF2D2D2E), RoundedCornerShape(3.dp))
-                            .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(3.dp))
-                            .clickable(enabled = !isRunning) {
-                                terminalViewModel.sendCommand(qCmd)
-                            }
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = qCmd,
-                            color = VsCodeTheme.Foreground,
-                            fontSize = 10.sp,
-                            fontFamily = VsCodeMonospaceFont
-                        )
+                if (isRunning) {
+                    val interactiveChips = listOf(
+                        "yes",
+                        "no",
+                        "y",
+                        "n",
+                        "Enter ↵",
+                        "↑ Up",
+                        "↓ Down"
+                    )
+                    interactiveChips.forEach { chip ->
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFF1E3A5F), RoundedCornerShape(3.dp))
+                                .border(0.5.dp, Color(0xFF007ACC), RoundedCornerShape(3.dp))
+                                .clickable {
+                                    when (chip) {
+                                        "Enter ↵" -> terminalViewModel.submitCurrentCommand()
+                                        "↑ Up" -> terminalViewModel.sendInput("\u001b[A")
+                                        "↓ Down" -> terminalViewModel.sendInput("\u001b[B")
+                                        else -> terminalViewModel.submitInteractiveInput(chip)
+                                    }
+                                }
+                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = chip,
+                                color = Color(0xFFE0EEFF),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                fontFamily = VsCodeMonospaceFont
+                            )
+                        }
+                    }
+                } else {
+                    val quickCommands = listOf(
+                        "node -v",
+                        "python --version",
+                        "npm init -y",
+                        "pip list",
+                        "ls -la",
+                        "pwd",
+                        "verify-env",
+                        "sandbox",
+                        "git status",
+                        "help",
+                        "clear"
+                    )
+                    quickCommands.forEach { qCmd ->
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFF2D2D2E), RoundedCornerShape(3.dp))
+                                .border(0.5.dp, VsCodeTheme.BorderColor, RoundedCornerShape(3.dp))
+                                .clickable {
+                                    terminalViewModel.sendCommand(qCmd)
+                                }
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = qCmd,
+                                color = VsCodeTheme.Foreground,
+                                fontSize = 10.sp,
+                                fontFamily = VsCodeMonospaceFont
+                            )
+                        }
                     }
                 }
             }
@@ -444,14 +546,9 @@ fun TerminalWebView(
         ) {
             BasicTextField(
                 value = textFieldValue,
-                readOnly = isRunning,
+                readOnly = false,
                 onValueChange = { newValue ->
                     onTerminalFocused?.invoke()
-
-                    if (isRunning) {
-                        // User cannot type when a process is running
-                        return@BasicTextField
-                    }
 
                     if (newValue.text == textFieldValue.text) {
                         // Allow arbitrary text selection anywhere in terminal output so user can Copy
@@ -476,7 +573,9 @@ fun TerminalWebView(
                         }
                     } else if (newValue.text.length < textFieldValue.text.length) {
                         // Backspace handled safely at prompt
-                        val rebuilt = prefixText + commandInput
+                        val newCmd = if (commandInput.isNotEmpty()) commandInput.dropLast(1) else ""
+                        terminalViewModel.updateCommandInput(newCmd)
+                        val rebuilt = prefixText + newCmd
                         textFieldValue = TextFieldValue(
                             text = rebuilt,
                             selection = TextRange(rebuilt.length)
