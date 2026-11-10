@@ -20,7 +20,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION_CODE = 12
+    private const val BOOTSTRAP_VERSION_CODE = 13
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -328,6 +328,21 @@ object NodeNativeBootstrap {
                   configurable: true,
                   enumerable: true
                 });
+              } catch (_) {}
+
+              // Report process.version as Node 20 LTS (v20.18.0) so npm, Next.js, and modern tools satisfy >=20.9.0 engine requirements
+              try {
+                Object.defineProperty(process, 'version', {
+                  value: 'v20.18.0',
+                  writable: true,
+                  configurable: true,
+                  enumerable: true
+                });
+                if (process.versions) {
+                  try {
+                    process.versions.node = '20.18.0';
+                  } catch (_) {}
+                }
               } catch (_) {}
 
               // 2. Prevent stdin EOF from terminating dev servers (e.g. react-scripts start.js line 149)

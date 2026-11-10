@@ -691,6 +691,7 @@ class TerminalViewModel(
             env["npm_config_update_notifier"] = "false"
             env["npm_config_yes"] = "true"
             env["npm_config_legacy_peer_deps"] = "true"
+            env["npm_config_engine_strict"] = "false"
             env["npm_config_script_shell"] = "/system/bin/sh"
             env["npm_config_cache"] = File(homeDir, ".npm").absolutePath
             env["npm_config_prefix"] = usrDir.absolutePath

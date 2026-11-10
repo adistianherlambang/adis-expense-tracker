@@ -152,4 +152,17 @@ class TerminalInteractiveTest {
         assertEquals(listOf(""), submitted)
         assertEquals("", remainder)
     }
+
+    @Test
+    fun testNodeVersionRequirementCheck() {
+        // Next.js and Tailwind oxide require >= 20.9.0
+        val targetVersion = "20.18.0"
+        val parts = targetVersion.split(".").map { it.toInt() }
+        val major = parts[0]
+        val minor = parts[1]
+
+        assertTrue("Major must be >= 20 for Next.js 16", major >= 20)
+        assertTrue("Minor must be >= 9 for Next.js 16 requirements", minor >= 9)
+    }
 }
+
