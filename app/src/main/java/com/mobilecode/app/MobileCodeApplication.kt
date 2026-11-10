@@ -24,20 +24,31 @@ class MobileCodeApplication : Application() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
+            val notificationManager = getSystemService(NotificationManager::class.java)
+
+            val terminalChannel = NotificationChannel(
                 CHANNEL_ID_TERMINAL,
                 "Mobile Code Background Services",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Keeps developer terminal sessions and background servers alive"
             }
-            val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager?.createNotificationChannel(channel)
+            notificationManager?.createNotificationChannel(terminalChannel)
+
+            val envChannel = NotificationChannel(
+                CHANNEL_ID_ENVIRONMENT,
+                "Docker Market & Environment Downloads",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Background download and install progress for Docker and runtime environments"
+            }
+            notificationManager?.createNotificationChannel(envChannel)
         }
     }
 
     companion object {
         const val CHANNEL_ID_TERMINAL = "mobile_code_terminal_channel"
+        const val CHANNEL_ID_ENVIRONMENT = "mobile_code_environment_channel"
         lateinit var instance: MobileCodeApplication
             private set
     }

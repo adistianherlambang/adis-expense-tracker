@@ -12,9 +12,11 @@ import androidx.compose.ui.unit.dp
 import com.mobilecode.app.core.designsystem.VsCodeTheme
 import com.mobilecode.app.core.filesystem.WorkspaceManager
 import com.mobilecode.app.core.git.GitViewModel
+import com.mobilecode.app.core.runtime.EnvironmentManager
 import com.mobilecode.app.core.runtime.PackageManager
 import com.mobilecode.app.core.search.SearchViewModel
 import com.mobilecode.app.core.settings.SettingsRepository
+import com.mobilecode.app.core.terminal.TerminalViewModel
 import com.mobilecode.app.ui.activitybar.ActivityView
 import java.io.File
 
@@ -26,7 +28,9 @@ fun SidebarContainer(
     searchViewModel: SearchViewModel,
     settingsRepository: SettingsRepository,
     packageManager: PackageManager,
+    environmentManager: EnvironmentManager,
     onFileSelected: (File) -> Unit,
+    terminalViewModel: TerminalViewModel? = null,
     modifier: Modifier = Modifier,
     width: Dp = 260.dp
 ) {
@@ -71,6 +75,12 @@ fun SidebarContainer(
                 SettingsView(
                     settingsRepository = settingsRepository,
                     packageManager = packageManager
+                )
+            }
+            ActivityView.ENVIRONMENT -> {
+                EnvironmentView(
+                    environmentManager = environmentManager,
+                    terminalViewModel = terminalViewModel
                 )
             }
         }

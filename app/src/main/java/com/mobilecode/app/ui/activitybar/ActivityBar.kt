@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.outlined.AltRoute
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -32,6 +33,7 @@ enum class ActivityView {
     SOURCE_CONTROL,
     RUN_DEBUG,
     EXTENSIONS,
+    ENVIRONMENT,
     SETTINGS
 }
 
@@ -84,6 +86,12 @@ fun ActivityBar(
                 contentDescription = "Extensions",
                 isSelected = isSidebarVisible && currentView == ActivityView.EXTENSIONS,
                 onClick = { onViewSelected(ActivityView.EXTENSIONS) }
+            )
+            ActivityBarItem(
+                icon = Icons.Default.Layers,
+                contentDescription = "Environments (Docker Market)",
+                isSelected = isSidebarVisible && currentView == ActivityView.ENVIRONMENT,
+                onClick = { onViewSelected(ActivityView.ENVIRONMENT) }
             )
         }
 

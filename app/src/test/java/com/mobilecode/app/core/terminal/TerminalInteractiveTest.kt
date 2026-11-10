@@ -1,5 +1,6 @@
 package com.mobilecode.app.core.terminal
 
+import com.mobilecode.app.core.runtime.EnvironmentItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -163,6 +164,32 @@ class TerminalInteractiveTest {
 
         assertTrue("Major must be >= 20 for Next.js 16", major >= 20)
         assertTrue("Minor must be >= 9 for Next.js 16 requirements", minor >= 9)
+    }
+
+    @Test
+    fun testEnvironmentItemModelProperties() {
+        val item = EnvironmentItem(
+            id = "node-22",
+            name = "Node.js 22 LTS (Current)",
+            version = "v22.14.0",
+            tag = "node:22-alpine",
+            category = "Node.js (Docker)",
+            description = "Node.js 22 LTS with V8 12.4, ES2024, Turbopack, and Next.js 16 support.",
+            sizeBytes = 42_100_000L,
+            formattedSize = "40.2 MB",
+            downloadUrl = "https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-arm64.tar.gz"
+        )
+
+        assertEquals("node-22", item.id)
+        assertEquals("node:22-alpine", item.tag)
+        assertEquals("v22.14.0", item.version)
+        assertFalse(item.isInstalled)
+        assertFalse(item.isActive)
+        assertFalse(item.isDownloading)
+
+        val updated = item.copy(isInstalled = true, isActive = true)
+        assertTrue(updated.isInstalled)
+        assertTrue(updated.isActive)
     }
 }
 

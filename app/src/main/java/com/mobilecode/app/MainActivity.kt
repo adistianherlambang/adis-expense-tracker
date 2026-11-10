@@ -13,10 +13,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import android.os.Build
 import com.mobilecode.app.core.designsystem.MobileCodeTheme
 import com.mobilecode.app.core.editor.EditorViewModel
 import com.mobilecode.app.core.filesystem.WorkspaceManager
 import com.mobilecode.app.core.git.GitViewModel
+import com.mobilecode.app.core.runtime.EnvironmentManager
 import com.mobilecode.app.core.runtime.PackageManager
 import com.mobilecode.app.core.search.SearchViewModel
 import com.mobilecode.app.core.settings.SettingsRepository
@@ -30,6 +32,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var workspaceManager: WorkspaceManager
     private lateinit var settingsRepository: SettingsRepository
     private lateinit var packageManager: PackageManager
+    private lateinit var environmentManager: EnvironmentManager
 
     private var isCommandPaletteOpen by mutableStateOf(false)
 
@@ -90,6 +93,14 @@ class MainActivity : ComponentActivity() {
         }
         settingsRepository = SettingsRepository(this)
         packageManager = PackageManager(this)
+        environmentManager = EnvironmentManager(this)
+
+        // Request POST_NOTIFICATIONS runtime permission on Android 13+ (API 33+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
 
         // Start background foreground service for terminal persistence
         TerminalForegroundService.startService(this)
@@ -104,6 +115,7 @@ class MainActivity : ComponentActivity() {
                     searchViewModel = searchViewModel,
                     settingsRepository = settingsRepository,
                     packageManager = packageManager,
+                    environmentManager = environmentManager,
                     isCommandPaletteOpen = isCommandPaletteOpen,
                     onOpenCommandPalette = { isCommandPaletteOpen = true },
                     onDismissCommandPalette = { isCommandPaletteOpen = false },

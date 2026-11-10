@@ -23,6 +23,15 @@ object NodeNativeBootstrap {
     private const val BOOTSTRAP_VERSION_CODE = 13
     private val initMutex = Mutex()
 
+    @Volatile
+    private var activeNodeVersion: String = "v20.18.0"
+
+    fun setActiveNodeVersion(version: String) {
+        activeNodeVersion = if (version.startsWith("v")) version else "v$version"
+    }
+
+    fun getActiveNodeVersion(): String = activeNodeVersion
+
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
         initMutex.withLock {
             val filesDir = context.filesDir.canonicalFile
@@ -330,17 +339,19 @@ object NodeNativeBootstrap {
                 });
               } catch (_) {}
 
-              // Report process.version as Node 20 LTS (v20.18.0) so npm, Next.js, and modern tools satisfy >=20.9.0 engine requirements
+              // Report process.version as dynamic active environment version (e.g. Node 20 / 22)
+              const targetNodeVer = process.env.MOBILE_CODE_NODE_VERSION || 'v20.18.0';
+              const cleanVerNumber = targetNodeVer.replace(/^v/, '');
               try {
                 Object.defineProperty(process, 'version', {
-                  value: 'v20.18.0',
+                  value: targetNodeVer,
                   writable: true,
                   configurable: true,
                   enumerable: true
                 });
                 if (process.versions) {
                   try {
-                    process.versions.node = '20.18.0';
+                    process.versions.node = cleanVerNumber;
                   } catch (_) {}
                 }
               } catch (_) {}

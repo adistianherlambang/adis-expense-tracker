@@ -27,6 +27,7 @@ import com.mobilecode.app.core.editor.insertTextIntoEditor
 import com.mobilecode.app.core.filesystem.WorkspaceManager
 import com.mobilecode.app.core.git.GitViewModel
 import com.mobilecode.app.core.keyboard.ProgrammingAccessoryBar
+import com.mobilecode.app.core.runtime.EnvironmentManager
 import com.mobilecode.app.core.runtime.PackageManager
 import com.mobilecode.app.core.search.SearchViewModel
 import com.mobilecode.app.core.settings.SettingsRepository
@@ -55,7 +56,8 @@ fun MainScreen(
     isCommandPaletteOpen: Boolean,
     onOpenCommandPalette: () -> Unit,
     onDismissCommandPalette: () -> Unit,
-    onOpenNewWindow: () -> Unit = {}
+    onOpenNewWindow: () -> Unit = {},
+    environmentManager: EnvironmentManager = remember { EnvironmentManager(workspaceManager.appContext) }
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -145,12 +147,14 @@ fun MainScreen(
                         searchViewModel = searchViewModel,
                         settingsRepository = settingsRepository,
                         packageManager = packageManager,
+                        environmentManager = environmentManager,
                         onFileSelected = { file ->
                             editorViewModel.openFile(file)
                             if (!isLandscape && !isTablet) {
                                 isSidebarVisible = false // Auto collapse on mobile
                             }
                         },
+                        terminalViewModel = terminalViewModel,
                         width = sidebarWidth
                     )
 
