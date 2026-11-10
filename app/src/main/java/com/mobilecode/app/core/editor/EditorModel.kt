@@ -24,3 +24,18 @@ data class EditorDiagnostics(
     val warningCount: Int = 0
 )
 
+enum class DiagnosticSeverity {
+    ERROR,
+    WARNING,
+    INFO
+}
+
+data class DiagnosticItem(
+    val file: File,
+    val line: Int,
+    val column: Int,
+    val message: String,
+    val severity: DiagnosticSeverity,
+    val source: String
+)
+

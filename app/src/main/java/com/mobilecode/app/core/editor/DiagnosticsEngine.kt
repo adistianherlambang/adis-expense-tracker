@@ -3,20 +3,7 @@ package com.mobilecode.app.core.editor
 import kotlinx.serialization.json.Json
 import java.io.File
 
-enum class DiagnosticSeverity {
-    ERROR,
-    WARNING,
-    INFO
-}
-
-data class DiagnosticItem(
-    val file: File,
-    val line: Int,
-    val column: Int,
-    val message: String,
-    val severity: DiagnosticSeverity,
-    val source: String
-)
+private data class OpenBracket(val char: Char, val line: Int, val col: Int)
 
 object DiagnosticsEngine {
 
@@ -241,8 +228,6 @@ object DiagnosticsEngine {
 
         return items
     }
-
-    private data class OpenBracket(val char: Char, val line: Int, val col: Int)
 
     private fun isMatching(open: Char, close: Char): Boolean {
         return (open == '{' && close == '}') ||

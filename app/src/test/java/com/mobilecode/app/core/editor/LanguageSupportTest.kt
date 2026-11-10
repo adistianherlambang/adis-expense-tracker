@@ -237,21 +237,12 @@ class LanguageSupportTest {
     @Test
     fun `test DiagnosticsEngine correctly handles multiline and template strings`() {
         val ktFile = File("sample.kt")
-        val ktCode = """
-            val multiline = ""${'"'}
-                {
-                    "json": "value's with apostrophe"
-                }
-            ""${'"'}
-        """.trimIndent()
+        val ktCode = "val multiline = \"\"\"\n    {\n        \"json\": \"value's with apostrophe\"\n    }\n\"\"\""
         val ktItems = DiagnosticsEngine.analyze(ktFile, ktCode)
         assertTrue("Expected 0 diagnostic errors for multiline string, but got: $ktItems", ktItems.isEmpty())
 
         val jsFile = File("sample.js")
-        val jsCode = """
-            const name = "World";
-            const greeting = `Hello ${'$'}{name}, it's wonderful! { unmatched`;
-        """.trimIndent()
+        val jsCode = "const name = \"World\";\nconst greeting = `Hello \${name}, it's wonderful! { unmatched`;"
         val jsItems = DiagnosticsEngine.analyze(jsFile, jsCode)
         assertTrue("Expected 0 diagnostic errors for template literal, but got: $jsItems", jsItems.isEmpty())
     }

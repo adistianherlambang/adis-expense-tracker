@@ -740,7 +740,7 @@ fun MonacoWebView(
  * 5. Auto-indentation on Enter (\n), including smart block expansion between {|}, (|), [|]
  * 6. HTML auto-closing tag on typing '>' (e.g. <div> -> <div></div>)
  */
-internal fun applyEditorSmartEdits(
+fun applyEditorSmartEdits(
     oldValue: TextFieldValue,
     newValue: TextFieldValue,
     language: String = ""
@@ -903,7 +903,7 @@ internal fun handleProgrammaticInsert(
 /**
  * Finds the indices of the matching bracket pair (), {}, [], and <> adjacent to [cursorOffset].
  */
-internal fun findMatchingBracketPair(
+fun findMatchingBracketPair(
     text: String,
     cursorOffset: Int,
     isHtml: Boolean = false
