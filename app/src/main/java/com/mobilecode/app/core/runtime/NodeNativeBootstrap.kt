@@ -20,7 +20,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION_CODE = 15
+    private const val BOOTSTRAP_VERSION_CODE = 19
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -113,6 +113,17 @@ object NodeNativeBootstrap {
                 LAUNCHER="${'$'}(head -n 1 "${'$'}DIR/.native_launcher_path")"
             fi
             if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
+                apk="${'$'}(pm path com.mobilecode.app.debug 2>/dev/null || pm path com.mobilecode.app 2>/dev/null)"
+                apk="${'$'}(echo "${'$'}apk" | head -n 1 | sed 's/^package://')"
+                if [ -n "${'$'}apk" ]; then
+                    cand="${'$'}(dirname "${'$'}apk")/lib/arm64/libnode_launcher.so"
+                    if [ -f "${'$'}cand" ]; then
+                        LAUNCHER="${'$'}cand"
+                        echo "${'$'}cand" > "${'$'}DIR/.native_launcher_path" 2>/dev/null || true
+                    fi
+                fi
+            fi
+            if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
                 LAUNCHER="${nativeNodeLauncher.absolutePath}"
             fi
             LIB_DIR="${'$'}(dirname "${'$'}LAUNCHER")"
@@ -147,6 +158,17 @@ object NodeNativeBootstrap {
                 LAUNCHER="${'$'}(head -n 1 "${'$'}DIR/.native_launcher_path")"
             fi
             if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
+                apk="${'$'}(pm path com.mobilecode.app.debug 2>/dev/null || pm path com.mobilecode.app 2>/dev/null)"
+                apk="${'$'}(echo "${'$'}apk" | head -n 1 | sed 's/^package://')"
+                if [ -n "${'$'}apk" ]; then
+                    cand="${'$'}(dirname "${'$'}apk")/lib/arm64/libnode_launcher.so"
+                    if [ -f "${'$'}cand" ]; then
+                        LAUNCHER="${'$'}cand"
+                        echo "${'$'}cand" > "${'$'}DIR/.native_launcher_path" 2>/dev/null || true
+                    fi
+                fi
+            fi
+            if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
                 LAUNCHER="${nativeNodeLauncher.absolutePath}"
             fi
             LIB_DIR="${'$'}(dirname "${'$'}LAUNCHER")"
@@ -174,6 +196,17 @@ object NodeNativeBootstrap {
                 LAUNCHER="${'$'}(head -n 1 "${'$'}DIR/.native_launcher_path")"
             fi
             if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
+                apk="${'$'}(pm path com.mobilecode.app.debug 2>/dev/null || pm path com.mobilecode.app 2>/dev/null)"
+                apk="${'$'}(echo "${'$'}apk" | head -n 1 | sed 's/^package://')"
+                if [ -n "${'$'}apk" ]; then
+                    cand="${'$'}(dirname "${'$'}apk")/lib/arm64/libnode_launcher.so"
+                    if [ -f "${'$'}cand" ]; then
+                        LAUNCHER="${'$'}cand"
+                        echo "${'$'}cand" > "${'$'}DIR/.native_launcher_path" 2>/dev/null || true
+                    fi
+                fi
+            fi
+            if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
                 LAUNCHER="${nativeNodeLauncher.absolutePath}"
             fi
             LIB_DIR="${'$'}(dirname "${'$'}LAUNCHER")"
@@ -199,6 +232,17 @@ object NodeNativeBootstrap {
             LAUNCHER=""
             if [ -f "${'$'}DIR/.native_launcher_path" ]; then
                 LAUNCHER="${'$'}(head -n 1 "${'$'}DIR/.native_launcher_path")"
+            fi
+            if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
+                apk="${'$'}(pm path com.mobilecode.app.debug 2>/dev/null || pm path com.mobilecode.app 2>/dev/null)"
+                apk="${'$'}(echo "${'$'}apk" | head -n 1 | sed 's/^package://')"
+                if [ -n "${'$'}apk" ]; then
+                    cand="${'$'}(dirname "${'$'}apk")/lib/arm64/libnode_launcher.so"
+                    if [ -f "${'$'}cand" ]; then
+                        LAUNCHER="${'$'}cand"
+                        echo "${'$'}cand" > "${'$'}DIR/.native_launcher_path" 2>/dev/null || true
+                    fi
+                fi
             fi
             if [ -z "${'$'}LAUNCHER" ] || [ ! -f "${'$'}LAUNCHER" ]; then
                 LAUNCHER="${nativeNodeLauncher.absolutePath}"
@@ -313,6 +357,53 @@ object NodeNativeBootstrap {
               const os = require('os');
               const cp = require('child_process');
               const mod = require('module');
+
+              // 0. Polyfill TextDecoder so that { fatal: true } does not throw ERR_NO_ICU on Android
+              const OrigTextDecoder = global.TextDecoder;
+              if (typeof OrigTextDecoder === 'function') {
+                function SafeTextDecoder(encoding, options) {
+                  if (options && options.fatal) {
+                    const safeOpts = Object.assign({}, options, { fatal: false });
+                    return new OrigTextDecoder(encoding, safeOpts);
+                  }
+                  return new OrigTextDecoder(encoding, options);
+                }
+                SafeTextDecoder.prototype = OrigTextDecoder.prototype;
+                Object.setPrototypeOf(SafeTextDecoder, OrigTextDecoder);
+                global.TextDecoder = SafeTextDecoder;
+                try {
+                  const util = require('util');
+                  if (util && util.TextDecoder) {
+                    util.TextDecoder = SafeTextDecoder;
+                  }
+                } catch (_) {}
+              }
+
+              // ES2023 Array methods polyfill for Next.js 15/16
+              if (!Array.prototype.toSorted) {
+                Array.prototype.toSorted = function(compareFn) {
+                  return Array.from(this).sort(compareFn);
+                };
+              }
+              if (!Array.prototype.toReversed) {
+                Array.prototype.toReversed = function() {
+                  return Array.from(this).reverse();
+                };
+              }
+              if (!Array.prototype.toSpliced) {
+                Array.prototype.toSpliced = function(start, deleteCount) {
+                  const copy = Array.from(this);
+                  copy.splice.apply(copy, Array.prototype.slice.call(arguments));
+                  return copy;
+                };
+              }
+              if (!Array.prototype.with) {
+                Array.prototype.with = function(index, value) {
+                  const copy = Array.from(this);
+                  copy[index] = value;
+                  return copy;
+                };
+              }
 
               // 1. Ensure os.cpus() never returns an empty array when Android restricts /proc/stat
               const origCpus = os.cpus;
@@ -562,6 +653,18 @@ object NodeNativeBootstrap {
                 };
               }
 
+              const origCompile = mod.prototype._compile;
+              mod.prototype._compile = function(content, filename) {
+                if (typeof filename === 'string' && filename.includes('next.config')) {
+                  if (typeof content === 'string' && content.includes('export default')) {
+                    content = content
+                      .replace(/export\s+default\s+([a-zA-Z0-9_${'$'}]+);?/g, 'module.exports = ${'$'}1;')
+                      .replace(/export\s+default\s+/g, 'module.exports = ');
+                  }
+                }
+                return origCompile.call(this, content, filename);
+              };
+
               // 5. Watchpack / fs.watch guard for Android system directories
               const origWatch = fs.watch;
               fs.watch = function(filename, options, listener) {
@@ -734,6 +837,26 @@ object NodeNativeBootstrap {
                     return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" --require "${'$'}{SHIM_FILE}" "${'$'}{binScript}"${'$'}{tail}`;
                   }
                 }
+                if (base === 'next') {
+                  let nextScript = path.resolve(cwd, 'node_modules/next/dist/bin/next');
+                  if (!fs.existsSync(nextScript)) {
+                    try {
+                      const files = fs.readdirSync(cwd);
+                      for (let i = 0; i < files.length; i++) {
+                        const cand = path.resolve(cwd, files[i], 'node_modules/next/dist/bin/next');
+                        if (fs.existsSync(cand)) {
+                          nextScript = cand;
+                          break;
+                        }
+                      }
+                    } catch (_) {}
+                  }
+                  if (fs.existsSync(nextScript)) {
+                    const hasTurboOrWebpack = tail.includes('--turbo') || tail.includes('--turbopack') || tail.includes('--webpack');
+                    const devFlag = (tail.trim().startsWith('dev') && !hasTurboOrWebpack) ? ' --webpack' : '';
+                    return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{NODE_EXEC}" --require "${'$'}{SHIM_FILE}" "${'$'}{nextScript}"${'$'}{tail}${'$'}{devFlag}`;
+                  }
+                }
                 if (rawCmd === '/bin/sh' || rawCmd === '/usr/bin/sh' || rawCmd === '/bin/bash' || rawCmd === '/usr/bin/bash') {
                   return `${'$'}{leadingWs}${'$'}{envPrefix}"${'$'}{ANDROID_SH}"${'$'}{tail}`;
                 }
@@ -852,6 +975,30 @@ object NodeNativeBootstrap {
                   if (fs.existsSync(binScript)) {
                     options.file = NODE_EXEC;
                     options.args = [NODE_EXEC, '--require', SHIM_FILE, binScript, ...origArgs.slice(1)];
+                    return options;
+                  }
+                }
+
+                if (base === 'next') {
+                  let nextScript = path.resolve(cwd, 'node_modules/next/dist/bin/next');
+                  if (!fs.existsSync(nextScript)) {
+                    try {
+                      const files = fs.readdirSync(cwd);
+                      for (let i = 0; i < files.length; i++) {
+                        const cand = path.resolve(cwd, files[i], 'node_modules/next/dist/bin/next');
+                        if (fs.existsSync(cand)) {
+                          nextScript = cand;
+                          break;
+                        }
+                      }
+                    } catch (_) {}
+                  }
+                  if (fs.existsSync(nextScript)) {
+                    const hasTurboOrWebpack = origArgs.some(a => typeof a === 'string' && (a.includes('turbo') || a.includes('webpack')));
+                    const isDev = origArgs.some(a => typeof a === 'string' && a.includes('dev'));
+                    const extraArgs = (isDev && !hasTurboOrWebpack) ? ['--webpack'] : [];
+                    options.file = NODE_EXEC;
+                    options.args = [NODE_EXEC, '--require', SHIM_FILE, nextScript, ...origArgs.slice(1), ...extraArgs];
                     return options;
                   }
                 }
@@ -986,6 +1133,40 @@ object NodeNativeBootstrap {
                     if (text.contains("\\p{Lu}")) {
                         file.writeText(text.replace("\\p{Lu}", "A-Z"), Charsets.UTF_8)
                     }
+                } else if (file.name == "wasm.js" && (file.parentFile?.name == "swc-wasm-nodejs" || file.parentFile?.name == "package")) {
+                    val text = file.readText(Charsets.UTF_8)
+                    if (text.contains("fatal: true")) {
+                        file.writeText(text.replace("fatal: true", "fatal: false"), Charsets.UTF_8)
+                    }
+                }
+            }
+
+            // Automatically extract downloaded @next/swc-wasm-nodejs tarball if present in Next.js cache
+            val nextSwcCache = File(workspacesDir.parentFile, "home/.cache/next-swc")
+            if (nextSwcCache.exists()) {
+                val wasmTgz = nextSwcCache.listFiles()?.firstOrNull { it.name.startsWith("swc-wasm-nodejs") && it.name.endsWith(".tgz") }
+                if (wasmTgz != null) {
+                    workspacesDir.walkTopDown().maxDepth(3).filter { it.isDirectory && File(it, "node_modules/next").exists() }.forEach { projectDir ->
+                        val targetNodeModules = File(projectDir, "node_modules/@next/swc-wasm-nodejs")
+                        val targetFallback = File(projectDir, "node_modules/next/next-swc-fallback/@next/swc-wasm-nodejs")
+                        listOf(targetNodeModules, targetFallback).forEach { targetDir ->
+                            if (!File(targetDir, "wasm.js").exists()) {
+                                targetDir.mkdirs()
+                                try {
+                                    FileInputStream(wasmTgz).use { fis ->
+                                        extractTgzStream(fis, targetDir)
+                                    }
+                                    val wasmJs = File(targetDir, "wasm.js")
+                                    if (wasmJs.exists()) {
+                                        val txt = wasmJs.readText(Charsets.UTF_8)
+                                        if (txt.contains("fatal: true")) {
+                                            wasmJs.writeText(txt.replace("fatal: true", "fatal: false"), Charsets.UTF_8)
+                                        }
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
                 }
             }
         } catch (_: Exception) {}
@@ -1082,6 +1263,21 @@ object NodeNativeBootstrap {
                     ?: File(workingDir ?: File("."), "node_modules/react-scripts/$targetName")
 
                 "${prefix}\"$launcher\" --require \"$shim\" \"${scriptFile.absolutePath}\"$rest"
+            }
+            "next" -> {
+                val inCurrent = workingDir?.let { File(it, "node_modules/next/dist/bin/next") }
+                val inSub = if (inCurrent?.exists() != true) {
+                    workingDir?.listFiles()?.firstOrNull { f ->
+                        f.isDirectory && File(f, "node_modules/next/dist/bin/next").exists()
+                    }?.let { File(it, "node_modules/next/dist/bin/next") }
+                } else null
+                val nextScript = inCurrent?.takeIf { it.exists() }
+                    ?: inSub?.takeIf { it.exists() }
+                    ?: File(workingDir ?: File("."), "node_modules/next/dist/bin/next")
+
+                val hasTurboOrWebpack = rest.contains("--turbo") || rest.contains("--turbopack") || rest.contains("--webpack")
+                val devFlag = if (rest.trim().startsWith("dev") && !hasTurboOrWebpack) " --webpack" else ""
+                "${prefix}\"$launcher\" --require \"$shim\" \"${nextScript.absolutePath}\"$rest$devFlag"
             }
             else -> {
                 val usrBin = getUsrBin(context)

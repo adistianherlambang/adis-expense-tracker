@@ -13,12 +13,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import android.os.Build
 import com.mobilecode.app.core.designsystem.MobileCodeTheme
 import com.mobilecode.app.core.editor.EditorViewModel
 import com.mobilecode.app.core.filesystem.WorkspaceManager
 import com.mobilecode.app.core.git.GitViewModel
 import com.mobilecode.app.core.runtime.EnvironmentManager
+import com.mobilecode.app.core.runtime.NodeNativeBootstrap
 import com.mobilecode.app.core.runtime.PackageManager
 import com.mobilecode.app.core.search.SearchViewModel
 import com.mobilecode.app.core.settings.SettingsRepository
@@ -26,6 +28,8 @@ import com.mobilecode.app.core.terminal.OutputLogger
 import com.mobilecode.app.core.terminal.TerminalForegroundService
 import com.mobilecode.app.core.terminal.TerminalViewModel
 import com.mobilecode.app.ui.MainScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -104,6 +108,11 @@ class MainActivity : ComponentActivity() {
 
         // Start background foreground service for terminal persistence
         TerminalForegroundService.startService(this)
+
+        // Asynchronously bootstrap native runtime & scripts
+        lifecycleScope.launch(Dispatchers.IO) {
+            NodeNativeBootstrap.ensureInitialized(applicationContext)
+        }
 
         setContent {
             MobileCodeTheme {
