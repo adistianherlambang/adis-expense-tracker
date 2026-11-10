@@ -22,8 +22,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import com.mobilecode.app.core.designsystem.VsCodeTheme
 import com.mobilecode.app.core.editor.EditorViewModel
-import com.mobilecode.app.core.editor.deleteCharFromEditor
-import com.mobilecode.app.core.editor.insertTextIntoEditor
 import com.mobilecode.app.core.filesystem.WorkspaceManager
 import com.mobilecode.app.core.git.GitViewModel
 import com.mobilecode.app.core.keyboard.ProgrammingAccessoryBar
@@ -96,6 +94,10 @@ fun MainScreen(
             PaletteCommand("git_refresh", "Refresh Repository", "Git") { gitViewModel.refresh() },
             PaletteCommand("settings", "Open Settings", "Preferences") {
                 currentActivityView = ActivityView.SETTINGS
+                isSidebarVisible = true
+            },
+            PaletteCommand("environments", "Open Environments (Docker Market)", "Preferences") {
+                currentActivityView = ActivityView.ENVIRONMENT
                 isSidebarVisible = true
             }
         )
