@@ -20,7 +20,7 @@ import java.util.zip.GZIPInputStream
 object NodeNativeBootstrap {
 
     private const val TAG = "NodeNativeBootstrap"
-    private const val BOOTSTRAP_VERSION_CODE = 14
+    private const val BOOTSTRAP_VERSION_CODE = 15
     private val initMutex = Mutex()
 
     suspend fun ensureInitialized(context: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
@@ -587,7 +587,6 @@ object NodeNativeBootstrap {
                 }
               };
 
-              const USR_DIR = process.env.MOBILE_CODE_USR_DIR || path.resolve(process.env.HOME || '/', '../usr');
               const SHIM_FILE = path.join(USR_DIR, 'lib/android-shim.js');
               const NPM_CLI_JS = process.env.MOBILE_CODE_NPM_CLI || path.join(USR_DIR, 'lib/node_modules/npm/bin/npm-cli.js');
               const NPX_CLI_JS = process.env.MOBILE_CODE_NPX_CLI || path.join(USR_DIR, 'lib/node_modules/npm/bin/npx-cli.js');
@@ -1035,14 +1034,16 @@ object NodeNativeBootstrap {
         val rest = match.groupValues[2]
 
         val shim = getAndroidShimFile(context).absolutePath
+        val libDir = File(context.applicationInfo.nativeLibraryDir).absolutePath
+        val prefix = "export LD_LIBRARY_PATH=\"$libDir:\$LD_LIBRARY_PATH\"; "
 
         return when (bin) {
             "node", "nodejs" -> {
                 val subCmd = rest.trim()
                 if (subCmd == "-v" || subCmd == "--version") {
-                    "\"$launcher\" --require \"$shim\" -p \"process.version\""
+                    "${prefix}\"$launcher\" --require \"$shim\" -p \"process.version\""
                 } else {
-                    "\"$launcher\" --require \"$shim\"$rest"
+                    "${prefix}\"$launcher\" --require \"$shim\"$rest"
                 }
             }
             "npm" -> {
@@ -1056,16 +1057,16 @@ object NodeNativeBootstrap {
                     } else null
                     val startScript = inCurrent?.takeIf { it.exists() } ?: inSub?.takeIf { it.exists() }
                     if (startScript != null && startScript.exists()) {
-                        "\"$launcher\" --require \"$shim\" \"${startScript.absolutePath}\""
+                        "${prefix}\"$launcher\" --require \"$shim\" \"${startScript.absolutePath}\""
                     } else {
-                        "\"$launcher\" --require \"$shim\" \"$npmCli\"$rest"
+                        "${prefix}\"$launcher\" --require \"$shim\" \"$npmCli\"$rest"
                     }
                 } else {
-                    "\"$launcher\" --require \"$shim\" \"$npmCli\"$rest"
+                    "${prefix}\"$launcher\" --require \"$shim\" \"$npmCli\"$rest"
                 }
             }
-            "npx" -> "\"$launcher\" --require \"$shim\" \"$npxCli\" --yes$rest"
-            "create-react-app" -> "\"$launcher\" --require \"$shim\" \"$npxCli\" --yes create-react-app$rest"
+            "npx" -> "${prefix}\"$launcher\" --require \"$shim\" \"$npxCli\" --yes$rest"
+            "create-react-app" -> "${prefix}\"$launcher\" --require \"$shim\" \"$npxCli\" --yes create-react-app$rest"
             "react-scripts" -> {
                 val isStart = rest.contains("start")
                 val targetName = if (isStart) "scripts/start.js" else "bin/react-scripts.js"
@@ -1080,7 +1081,7 @@ object NodeNativeBootstrap {
                     ?: inSub?.takeIf { it.exists() }
                     ?: File(workingDir ?: File("."), "node_modules/react-scripts/$targetName")
 
-                "\"$launcher\" --require \"$shim\" \"${scriptFile.absolutePath}\"$rest"
+                "${prefix}\"$launcher\" --require \"$shim\" \"${scriptFile.absolutePath}\"$rest"
             }
             else -> {
                 val usrBin = getUsrBin(context)
@@ -1106,7 +1107,7 @@ object NodeNativeBootstrap {
                     }
 
                     if (canonicalTarget.name.endsWith(".js") || isNodeScript(canonicalTarget)) {
-                        return "\"$launcher\" --require \"$shim\" \"${canonicalTarget.absolutePath}\"$rest"
+                        return "${prefix}\"$launcher\" --require \"$shim\" \"${canonicalTarget.absolutePath}\"$rest"
                     }
                 }
 
